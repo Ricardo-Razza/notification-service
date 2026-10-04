@@ -40,6 +40,10 @@ public class NotificationEntity {
     @Column(name = "application_id", length = 36)
     private UUID applicationId;
 
+    @JdbcTypeCode(SqlTypes.CHAR)
+    @Column(name = "schedule_id", length = 36)
+    private UUID scheduleId;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "channel", length = 20, nullable = false)
     private NotificationChannel channel;

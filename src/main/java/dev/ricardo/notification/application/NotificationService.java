@@ -5,6 +5,7 @@ import dev.ricardo.notification.api.NotificationResponse;
 import dev.ricardo.notification.api.PageResponse;
 import dev.ricardo.notification.api.SendNotificationResult;
 import dev.ricardo.notification.domain.InvalidNotificationException;
+import dev.ricardo.notification.domain.NotificationCancelConflictException;
 import dev.ricardo.notification.domain.NotificationChannel;
 import dev.ricardo.notification.domain.NotificationNotFoundException;
 import dev.ricardo.notification.domain.NotificationPublishException;
@@ -38,6 +39,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.time.format.DateTimeParseException;
 import java.util.Arrays;
 import java.util.Map;
 import java.util.Optional;
@@ -58,6 +60,9 @@ public class NotificationService {
     private final SenderFactory senderFactory;
     private final NotificationPublisher notificationPublisher;
     private final TransactionTemplate transactionTemplate;
+
+    @org.springframework.beans.factory.annotation.Value("${app.scheduling.max-future-days:365}")
+    private int maxFutureDays = 365;
 
     public NotificationResponse sendNotification(CreateNotificationRequest request) {
         return sendNotification(request, null, null).response();
@@ -105,6 +110,27 @@ public class NotificationService {
         }
         templateRenderer.render(template.getContent(), variables);
 
+        Instant scheduledInstant = null;
+        if (request.scheduledAt() != null && !request.scheduledAt().isBlank()) {
+            try {
+                OffsetDateTime odt = OffsetDateTime.parse(request.scheduledAt().trim());
+                scheduledInstant = odt.toInstant();
+            } catch (DateTimeParseException ex) {
+                throw new InvalidNotificationException("Invalid scheduledAt format. Must be ISO-8601 with offset (e.g. 2026-10-05T10:00:00-03:00)");
+            }
+
+            Instant now = Instant.now();
+            if (!scheduledInstant.isAfter(now)) {
+                throw new InvalidNotificationException("scheduledAt must be in the future");
+            }
+
+            Instant maxFuture = now.plus(java.time.Duration.ofDays(maxFutureDays));
+            if (scheduledInstant.isAfter(maxFuture)) {
+                throw new InvalidNotificationException(String.format("scheduledAt cannot exceed maximum future scheduling limit of %d days", maxFutureDays));
+            }
+        }
+
+        final Instant finalScheduledInstant = scheduledInstant;
         NotificationEntity notification;
         try {
             notification = transactionTemplate.execute(status -> {
@@ -114,12 +140,13 @@ public class NotificationService {
                         .recipient(request.recipient())
                         .templateCode(request.template())
                         .payload(variables)
-                        .status(NotificationStatus.PENDING)
+                        .status(finalScheduledInstant != null ? NotificationStatus.SCHEDULED : NotificationStatus.PENDING)
+                        .scheduledAt(finalScheduledInstant)
                         .attempts(0)
                         .idempotencyKey(cleanIdempotencyKey)
                         .build();
                 NotificationEntity saved = notificationRepository.save(entity);
-                log.info("Notification {} created with status PENDING for channel {}", saved.getId(), saved.getChannel());
+                log.info("Notification {} created with status {} for channel {}", saved.getId(), saved.getStatus(), saved.getChannel());
                 return saved;
             });
         } catch (DataIntegrityViolationException ex) {
@@ -132,6 +159,12 @@ public class NotificationService {
                 }
             }
             throw ex;
+        }
+
+        // Se for agendado para o futuro, NÃO publica na fila e responde 202
+        if (finalScheduledInstant != null) {
+            log.info("Notification {} is SCHEDULED for {}. Skipping queue publishing.", notification.getId(), finalScheduledInstant);
+            return new SendNotificationResult(NotificationResponse.from(notification), false);
         }
 
         // Publica fora da transação do banco (sem I/O dentro de transação)
@@ -216,6 +249,34 @@ public class NotificationService {
                 .map(NotificationAttemptResponse::from)
                 .toList();
         return NotificationResponse.from(queuedEntity, attemptResponses);
+    }
+
+    public NotificationResponse cancelScheduledNotification(UUID id, UUID applicationId) {
+        NotificationEntity notification = notificationRepository.findById(id)
+                .orElseThrow(() -> new NotificationNotFoundException(id));
+
+        if (applicationId != null && !applicationId.equals(notification.getApplicationId())) {
+            throw new NotificationNotFoundException(id);
+        }
+
+        if (notification.getStatus() != NotificationStatus.SCHEDULED) {
+            throw new NotificationCancelConflictException(
+                    String.format("Notification %s cannot be canceled because it is in status %s (only SCHEDULED notifications can be canceled)", id, notification.getStatus())
+            );
+        }
+
+        NotificationEntity canceledEntity = transactionTemplate.execute(status -> {
+            NotificationEntity entity = notificationRepository.findById(id)
+                    .orElseThrow(() -> new NotificationNotFoundException(id));
+            entity.setStatus(NotificationStatus.CANCELED);
+            return notificationRepository.save(entity);
+        });
+
+        var attempts = attemptRepository.findByNotificationIdOrderByAttemptNumberAsc(id);
+        var attemptResponses = attempts.stream()
+                .map(NotificationAttemptResponse::from)
+                .toList();
+        return NotificationResponse.from(canceledEntity, attemptResponses);
     }
 
     @Transactional(readOnly = true)

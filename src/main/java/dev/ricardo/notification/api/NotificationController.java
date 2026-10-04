@@ -4,6 +4,7 @@ import dev.ricardo.notification.application.NotificationService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -79,5 +80,14 @@ public class NotificationController {
     ) {
         NotificationResponse response = notificationService.retryNotification(id, applicationId);
         return ResponseEntity.accepted().body(response);
+    }
+
+    @DeleteMapping("/{id}")
+    public ResponseEntity<NotificationResponse> cancelNotification(
+            @org.springframework.web.bind.annotation.RequestAttribute(value = ApiKeyAuthFilter.AUTHENTICATED_APPLICATION_ID, required = false) UUID applicationId,
+            @PathVariable("id") UUID id
+    ) {
+        NotificationResponse response = notificationService.cancelScheduledNotification(id, applicationId);
+        return ResponseEntity.ok(response);
     }
 }

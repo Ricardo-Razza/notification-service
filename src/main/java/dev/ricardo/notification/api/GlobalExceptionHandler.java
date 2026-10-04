@@ -66,6 +66,15 @@ public class GlobalExceptionHandler {
         return problem;
     }
 
+    @ExceptionHandler(dev.ricardo.notification.domain.NotificationCancelConflictException.class)
+    public ProblemDetail handleNotificationCancelConflict(dev.ricardo.notification.domain.NotificationCancelConflictException ex) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
+        problem.setTitle("Conflict");
+        problem.setType(URI.create("urn:problem-type:conflict"));
+        problem.setProperty("timestamp", Instant.now());
+        return problem;
+    }
+
     @ExceptionHandler(ApplicationNotFoundException.class)
     public ProblemDetail handleApplicationNotFound(ApplicationNotFoundException ex) {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, ex.getMessage());

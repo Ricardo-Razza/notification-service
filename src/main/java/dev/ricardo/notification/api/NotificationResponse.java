@@ -15,6 +15,7 @@ public record NotificationResponse(
         String recipient,
         String template,
         int attempts,
+        Instant scheduledAt,
         Instant createdAt,
         Instant sentAt,
         String lastError,
@@ -31,7 +32,22 @@ public record NotificationResponse(
             Instant sentAt,
             String lastError
     ) {
-        this(id, status, channel, recipient, template, attempts, createdAt, sentAt, lastError, List.of());
+        this(id, status, channel, recipient, template, attempts, null, createdAt, sentAt, lastError, List.of());
+    }
+
+    public NotificationResponse(
+            UUID id,
+            NotificationStatus status,
+            NotificationChannel channel,
+            String recipient,
+            String template,
+            int attempts,
+            Instant createdAt,
+            Instant sentAt,
+            String lastError,
+            List<NotificationAttemptResponse> attemptsHistory
+    ) {
+        this(id, status, channel, recipient, template, attempts, null, createdAt, sentAt, lastError, attemptsHistory);
     }
 
     public static NotificationResponse from(NotificationEntity entity) {
@@ -46,6 +62,7 @@ public record NotificationResponse(
                 entity.getRecipient(),
                 entity.getTemplateCode(),
                 entity.getAttempts(),
+                entity.getScheduledAt(),
                 entity.getCreatedAt(),
                 entity.getSentAt(),
                 entity.getLastError(),

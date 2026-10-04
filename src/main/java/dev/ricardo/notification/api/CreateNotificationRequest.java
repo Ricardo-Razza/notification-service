@@ -16,8 +16,19 @@ public record CreateNotificationRequest(
         @NotBlank(message = "Template is required")
         String template,
 
-        Map<String, String> variables
+        Map<String, String> variables,
+
+        String scheduledAt
 ) {
+    public CreateNotificationRequest(
+            String recipient,
+            NotificationChannel channel,
+            String template,
+            Map<String, String> variables
+    ) {
+        this(recipient, channel, template, variables, null);
+    }
+
     public Map<String, String> safeVariables() {
         return variables != null ? variables : Map.of();
     }
