@@ -64,7 +64,9 @@ public class NotificationService {
                     .status(NotificationStatus.PENDING)
                     .attempts(0)
                     .build();
-            return notificationRepository.save(entity);
+            NotificationEntity saved = notificationRepository.save(entity);
+            log.info("Notification {} created with status PENDING for channel {}", saved.getId(), saved.getChannel());
+            return saved;
         });
 
         transactionTemplate.executeWithoutResult(status -> {
@@ -72,6 +74,7 @@ public class NotificationService {
                     .orElseThrow(() -> new NotificationNotFoundException(notification.getId()));
             entity.setStatus(NotificationStatus.PROCESSING);
             notificationRepository.save(entity);
+            log.info("Notification {} transitioned to PROCESSING", notification.getId());
         });
 
         boolean sendSuccess = false;
@@ -79,9 +82,9 @@ public class NotificationService {
         try {
             sender.send(message);
             sendSuccess = true;
-            log.info("Notification {} sent successfully to recipient", notification.getId());
+            log.info("Notification {} dispatched successfully via channel {}", notification.getId(), request.channel());
         } catch (Exception ex) {
-            log.error("Failed to send notification {}", notification.getId(), ex);
+            log.error("Failed to dispatch notification {} via channel {}: {}", notification.getId(), request.channel(), ex.getMessage());
             errorMessage = ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName();
         }
 
@@ -99,7 +102,9 @@ public class NotificationService {
                 entity.setStatus(NotificationStatus.FAILED);
                 entity.setLastError(finalErrorMessage);
             }
-            return notificationRepository.save(entity);
+            NotificationEntity saved = notificationRepository.save(entity);
+            log.info("Notification {} completed with status {}", saved.getId(), saved.getStatus());
+            return saved;
         });
 
         return NotificationResponse.from(finalEntity);

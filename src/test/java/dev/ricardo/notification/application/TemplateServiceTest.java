@@ -216,4 +216,64 @@ class TemplateServiceTest {
         assertThat(response.code()).isEqualTo("WELCOME");
         assertThat(response.channel()).isEqualTo(NotificationChannel.EMAIL);
     }
+
+    @Test
+    @DisplayName("Deve lançar TemplateNotFoundException ao tentar atualizar ID inexistente")
+    void shouldFailToUpdateWhenTemplateNotFound() {
+        UUID id = UUID.randomUUID();
+        when(templateRepository.findById(id)).thenReturn(Optional.empty());
+
+        UpdateTemplateRequest request = new UpdateTemplateRequest("Novo Assunto", "Novo Conteúdo");
+
+        assertThatThrownBy(() -> templateService.updateTemplate(id, request))
+                .isInstanceOf(TemplateNotFoundException.class)
+                .hasMessageContaining(id.toString());
+
+        verify(templateRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("Deve lançar InvalidTemplateException ao atualizar template EMAIL com assunto em branco")
+    void shouldFailToUpdateEmailTemplateWithBlankSubject() {
+        UUID id = UUID.randomUUID();
+        TemplateEntity entity = TemplateEntity.builder()
+                .id(id)
+                .code("WELCOME")
+                .channel(NotificationChannel.EMAIL)
+                .subject("Assunto")
+                .content("Conteúdo")
+                .build();
+
+        when(templateRepository.findById(id)).thenReturn(Optional.of(entity));
+
+        UpdateTemplateRequest request = new UpdateTemplateRequest("   ", "Novo Conteúdo");
+
+        assertThatThrownBy(() -> templateService.updateTemplate(id, request))
+                .isInstanceOf(InvalidTemplateException.class)
+                .hasMessageContaining("Subject is required for EMAIL channel");
+
+        verify(templateRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("Deve listar todos os templates quando canal for nulo")
+    void shouldListAllTemplatesWhenChannelIsNull() {
+        TemplateEntity entity = TemplateEntity.builder()
+                .id(UUID.randomUUID())
+                .code("WELCOME")
+                .channel(NotificationChannel.EMAIL)
+                .subject("Assunto")
+                .content("Conteúdo")
+                .createdAt(Instant.now())
+                .updatedAt(Instant.now())
+                .build();
+
+        when(templateRepository.findAll()).thenReturn(List.of(entity));
+
+        List<TemplateResponse> responses = templateService.listTemplates(null);
+
+        assertThat(responses).hasSize(1);
+        verify(templateRepository).findAll();
+        verify(templateRepository, never()).findByChannel(any());
+    }
 }

@@ -296,4 +296,106 @@ class NotificationServiceTest {
 
         verify(templateRepository, never()).findByCodeAndChannel(any(), any());
     }
+
+    @Test
+    @DisplayName("Deve lançar InvalidNotificationException quando o destinatário for nulo ou em branco")
+    void shouldFailWhenRecipientIsBlank() {
+        CreateNotificationRequest request = new CreateNotificationRequest(
+                "   ",
+                NotificationChannel.EMAIL,
+                "WELCOME",
+                Map.of()
+        );
+
+        assertThatThrownBy(() -> notificationService.sendNotification(request))
+                .isInstanceOf(InvalidNotificationException.class)
+                .hasMessageContaining("Recipient cannot be blank");
+    }
+
+    @Test
+    @DisplayName("Deve buscar notificação por ID com sucesso")
+    void shouldGetNotificationByIdSuccessfully() {
+        UUID id = UUID.randomUUID();
+        NotificationEntity entity = NotificationEntity.builder()
+                .id(id)
+                .channel(NotificationChannel.EMAIL)
+                .recipient("ricardo@exemplo.com")
+                .templateCode("WELCOME")
+                .status(NotificationStatus.SENT)
+                .attempts(1)
+                .sentAt(Instant.now())
+                .createdAt(Instant.now())
+                .updatedAt(Instant.now())
+                .build();
+
+        when(notificationRepository.findById(id)).thenReturn(Optional.of(entity));
+
+        NotificationResponse response = notificationService.getNotificationById(id);
+
+        assertThat(response.id()).isEqualTo(id);
+        assertThat(response.status()).isEqualTo(NotificationStatus.SENT);
+        assertThat(response.recipient()).isEqualTo("ricardo@exemplo.com");
+    }
+
+    @Test
+    @DisplayName("Deve lançar NotificationNotFoundException quando buscar ID inexistente")
+    void shouldThrowWhenNotificationNotFoundById() {
+        UUID id = UUID.randomUUID();
+        when(notificationRepository.findById(id)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> notificationService.getNotificationById(id))
+                .isInstanceOf(NotificationNotFoundException.class)
+                .hasMessageContaining(id.toString());
+    }
+
+    @Test
+    @DisplayName("Deve enviar notificação com sucesso quando o template não possuir assunto")
+    void shouldSendNotificationWhenTemplateHasNoSubject() {
+        UUID notificationId = UUID.randomUUID();
+        CreateNotificationRequest request = new CreateNotificationRequest(
+                "ricardo@exemplo.com",
+                NotificationChannel.EMAIL,
+                "SIMPLE_MSG",
+                Map.of()
+        );
+
+        TemplateEntity template = TemplateEntity.builder()
+                .code("SIMPLE_MSG")
+                .channel(NotificationChannel.EMAIL)
+                .subject(null)
+                .content("Mensagem simples")
+                .build();
+
+        when(templateRepository.findByCodeAndChannel("SIMPLE_MSG", NotificationChannel.EMAIL))
+                .thenReturn(Optional.of(template));
+        when(senderFactory.get(NotificationChannel.EMAIL)).thenReturn(notificationSender);
+        when(templateRenderer.render("Mensagem simples", Map.of())).thenReturn("Mensagem simples");
+
+        when(notificationRepository.save(any(NotificationEntity.class)))
+                .thenAnswer(inv -> {
+                    NotificationEntity entity = inv.getArgument(0);
+                    if (entity.getId() == null) {
+                        entity.setId(notificationId);
+                        entity.setCreatedAt(Instant.now());
+                        entity.setUpdatedAt(Instant.now());
+                    }
+                    return entity;
+                });
+        when(notificationRepository.findById(notificationId))
+                .thenAnswer(inv -> Optional.of(NotificationEntity.builder()
+                        .id(notificationId)
+                        .channel(NotificationChannel.EMAIL)
+                        .recipient("ricardo@exemplo.com")
+                        .templateCode("SIMPLE_MSG")
+                        .status(NotificationStatus.PROCESSING)
+                        .attempts(0)
+                        .createdAt(Instant.now())
+                        .updatedAt(Instant.now())
+                        .build()));
+
+        NotificationResponse response = notificationService.sendNotification(request);
+
+        assertThat(response.status()).isEqualTo(NotificationStatus.SENT);
+        verify(notificationSender).send(new RenderedMessage("ricardo@exemplo.com", null, "Mensagem simples"));
+    }
 }
