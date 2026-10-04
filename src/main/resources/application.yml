@@ -29,9 +29,29 @@ spring:
           starttls:
             enable: ${SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE:false}
 
+  rabbitmq:
+    host: ${SPRING_RABBITMQ_HOST:${RABBITMQ_HOST:localhost}}
+    port: ${SPRING_RABBITMQ_PORT:${RABBITMQ_PORT:5672}}
+    username: ${SPRING_RABBITMQ_USERNAME:${RABBITMQ_USER:guest}}
+    password: ${SPRING_RABBITMQ_PASSWORD:${RABBITMQ_PASSWORD:guest}}
+    publisher-confirm-type: correlated
+    publisher-returns: true
+
 app:
   mail:
     from: ${MAIL_FROM:no-reply@notification.local}
+  rabbitmq:
+    exchange: ${RABBITMQ_EXCHANGE:notification.exchange}
+    queue: ${RABBITMQ_QUEUE:notification.queue}
+    routing-key: ${RABBITMQ_ROUTING_KEY:notification.send}
+    retry-1-ttl: ${RABBITMQ_RETRY_1_TTL:10000}
+    retry-2-ttl: ${RABBITMQ_RETRY_2_TTL:30000}
+    retry-3-ttl: ${RABBITMQ_RETRY_3_TTL:120000}
+    retry-1-routing-key: notification.retry.10s
+    retry-2-routing-key: notification.retry.30s
+    retry-3-routing-key: notification.retry.2m
+    dlq: ${RABBITMQ_DLQ:notification.dlq}
+    dlq-routing-key: ${RABBITMQ_DLQ_ROUTING_KEY:notification.dlq}
 
 management:
   endpoints:

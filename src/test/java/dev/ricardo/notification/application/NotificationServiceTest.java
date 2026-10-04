@@ -59,6 +59,9 @@ class NotificationServiceTest {
     private SenderFactory senderFactory;
 
     @Mock
+    private NotificationPublisher notificationPublisher;
+
+    @Mock
     private TransactionTemplate transactionTemplate;
 
     @Mock
@@ -83,7 +86,7 @@ class NotificationServiceTest {
     }
 
     @Test
-    @DisplayName("Deve enviar notificação por e-mail com sucesso e gravar status SENT")
+    @DisplayName("Deve enfileirar notificação com sucesso e gravar status QUEUED")
     void shouldSendNotificationSuccessfully() {
         UUID notificationId = UUID.randomUUID();
         CreateNotificationRequest request = new CreateNotificationRequest(
@@ -102,7 +105,6 @@ class NotificationServiceTest {
 
         when(templateRepository.findByCodeAndChannel("WELCOME", NotificationChannel.EMAIL))
                 .thenReturn(Optional.of(template));
-        when(senderFactory.get(NotificationChannel.EMAIL)).thenReturn(notificationSender);
         when(templateRenderer.render("Bem-vindo, {{name}}!", request.variables()))
                 .thenReturn("Bem-vindo, Ricardo!");
         when(templateRenderer.render("Olá {{name}}, obrigado por se cadastrar.", request.variables()))
@@ -133,21 +135,17 @@ class NotificationServiceTest {
         NotificationResponse response = notificationService.sendNotification(request);
 
         assertThat(response.id()).isEqualTo(notificationId);
-        assertThat(response.status()).isEqualTo(NotificationStatus.SENT);
-        assertThat(response.sentAt()).isNotNull();
-        assertThat(response.attempts()).isEqualTo(1);
+        assertThat(response.status()).isEqualTo(NotificationStatus.QUEUED);
+        assertThat(response.sentAt()).isNull();
+        assertThat(response.attempts()).isEqualTo(0);
         assertThat(response.lastError()).isNull();
 
-        verify(notificationSender).send(new RenderedMessage(
-                "ricardo@exemplo.com",
-                "Bem-vindo, Ricardo!",
-                "Olá Ricardo, obrigado por se cadastrar."
-        ));
+        verify(notificationPublisher).publish(notificationId);
     }
 
     @Test
-    @DisplayName("Deve registrar status FAILED e gravar lastError quando sender lançar exceção sem gerar 500")
-    void shouldHandleSenderFailureGracefully() {
+    @DisplayName("Deve falhar com NotificationPublishException e manter status PENDING quando a publicação falhar")
+    void shouldHandleQueuePublishFailureGracefully() {
         UUID notificationId = UUID.randomUUID();
         CreateNotificationRequest request = new CreateNotificationRequest(
                 "ricardo@exemplo.com",
@@ -165,7 +163,6 @@ class NotificationServiceTest {
 
         when(templateRepository.findByCodeAndChannel("WELCOME", NotificationChannel.EMAIL))
                 .thenReturn(Optional.of(template));
-        when(senderFactory.get(NotificationChannel.EMAIL)).thenReturn(notificationSender);
         when(templateRenderer.render(any(), any())).thenReturn("Renderizado");
 
         when(notificationRepository.save(any(NotificationEntity.class)))
@@ -178,27 +175,16 @@ class NotificationServiceTest {
                     }
                     return entity;
                 });
-        when(notificationRepository.findById(notificationId))
-                .thenAnswer(inv -> Optional.of(NotificationEntity.builder()
-                        .id(notificationId)
-                        .channel(NotificationChannel.EMAIL)
-                        .recipient("ricardo@exemplo.com")
-                        .templateCode("WELCOME")
-                        .status(NotificationStatus.PROCESSING)
-                        .attempts(0)
-                        .createdAt(Instant.now())
-                        .updatedAt(Instant.now())
-                        .build()));
 
-        doThrow(new RuntimeException("Falha na conexão com o servidor SMTP"))
-                .when(notificationSender).send(any(RenderedMessage.class));
+        doThrow(new dev.ricardo.notification.domain.NotificationPublishException("RabbitMQ connection failure"))
+                .when(notificationPublisher).publish(notificationId);
 
-        NotificationResponse response = notificationService.sendNotification(request);
+        assertThatThrownBy(() -> notificationService.sendNotification(request))
+                .isInstanceOf(dev.ricardo.notification.domain.NotificationPublishException.class)
+                .hasMessageContaining("RabbitMQ connection failure");
 
-        assertThat(response.status()).isEqualTo(NotificationStatus.FAILED);
-        assertThat(response.attempts()).isEqualTo(1);
-        assertThat(response.sentAt()).isNull();
-        assertThat(response.lastError()).contains("Falha na conexão com o servidor SMTP");
+        // Confirma que não transicionou para QUEUED
+        verify(notificationRepository, never()).findById(notificationId);
     }
 
     @Test
@@ -262,14 +248,6 @@ class NotificationServiceTest {
                 Map.of()
         );
 
-        TemplateEntity template = TemplateEntity.builder()
-                .code("SMS_ALERT")
-                .channel(NotificationChannel.SMS)
-                .content("Alerta SMS")
-                .build();
-
-        when(templateRepository.findByCodeAndChannel("SMS_ALERT", NotificationChannel.SMS))
-                .thenReturn(Optional.of(template));
         when(senderFactory.get(NotificationChannel.SMS))
                 .thenThrow(new UnsupportedChannelException(NotificationChannel.SMS));
 
@@ -395,7 +373,7 @@ class NotificationServiceTest {
 
         NotificationResponse response = notificationService.sendNotification(request);
 
-        assertThat(response.status()).isEqualTo(NotificationStatus.SENT);
-        verify(notificationSender).send(new RenderedMessage("ricardo@exemplo.com", null, "Mensagem simples"));
+        assertThat(response.status()).isEqualTo(NotificationStatus.QUEUED);
+        verify(notificationPublisher).publish(notificationId);
     }
 }

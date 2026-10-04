@@ -38,7 +38,7 @@ public class NotificationController {
                 .path("/{id}")
                 .buildAndExpand(result.response().id())
                 .toUri();
-        return ResponseEntity.created(location).body(result.response());
+        return ResponseEntity.accepted().location(location).body(result.response());
     }
 
     @GetMapping

@@ -43,8 +43,8 @@ class NotificationControllerTest {
     private NotificationService notificationService;
 
     @Test
-    @DisplayName("POST /api/v1/notifications deve responder 201 com status SENT e payload correto")
-    void shouldCreateAndSendNotificationSuccessfully() throws Exception {
+    @DisplayName("POST /api/v1/notifications deve responder 202 com status QUEUED e header Location")
+    void shouldCreateAndQueueNotificationSuccessfully() throws Exception {
         UUID id = UUID.randomUUID();
         CreateNotificationRequest request = new CreateNotificationRequest(
                 "ricardo@exemplo.com",
@@ -55,13 +55,13 @@ class NotificationControllerTest {
 
         NotificationResponse response = new NotificationResponse(
                 id,
-                NotificationStatus.SENT,
+                NotificationStatus.QUEUED,
                 NotificationChannel.EMAIL,
                 "ricardo@exemplo.com",
                 "WELCOME",
-                1,
+                0,
                 Instant.now(),
-                Instant.now(),
+                null,
                 null
         );
 
@@ -71,16 +71,36 @@ class NotificationControllerTest {
         mockMvc.perform(post("/api/v1/notifications")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isCreated())
+                .andExpect(status().isAccepted())
                 .andExpect(header().string("Location", containsString("/api/v1/notifications/" + id)))
                 .andExpect(jsonPath("$.id", is(id.toString())))
-                .andExpect(jsonPath("$.status", is("SENT")))
+                .andExpect(jsonPath("$.status", is("QUEUED")))
                 .andExpect(jsonPath("$.channel", is("EMAIL")))
                 .andExpect(jsonPath("$.recipient", is("ricardo@exemplo.com")))
                 .andExpect(jsonPath("$.template", is("WELCOME")))
-                .andExpect(jsonPath("$.attempts", is(1)))
-                .andExpect(jsonPath("$.sentAt").exists())
+                .andExpect(jsonPath("$.attempts", is(0)))
                 .andExpect(jsonPath("$.lastError").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("POST /api/v1/notifications deve responder 503 quando a publicação na fila falhar")
+    void shouldReturn503WhenQueuePublishingFails() throws Exception {
+        CreateNotificationRequest request = new CreateNotificationRequest(
+                "ricardo@exemplo.com",
+                NotificationChannel.EMAIL,
+                "WELCOME",
+                Map.of("name", "Ricardo")
+        );
+
+        when(notificationService.sendNotification(any(CreateNotificationRequest.class), any(), any()))
+                .thenThrow(new dev.ricardo.notification.domain.NotificationPublishException("Queue unavailable"));
+
+        mockMvc.perform(post("/api/v1/notifications")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.type", is("urn:problem-type:service-unavailable")))
+                .andExpect(jsonPath("$.title", is("Service Unavailable")));
     }
 
     @Test

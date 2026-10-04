@@ -84,6 +84,9 @@ class IdempotencyIntegrationTest {
     @MockitoBean
     private JavaMailSender mailSender;
 
+    @MockitoBean
+    private NotificationPublisher notificationPublisher;
+
     private String apiKey1;
     private ApplicationEntity app1;
     private String apiKey2;
@@ -92,6 +95,7 @@ class IdempotencyIntegrationTest {
     @BeforeEach
     void setUp() {
         Mockito.clearInvocations(mailSender);
+        Mockito.clearInvocations(notificationPublisher);
 
         ApiKeyService.GeneratedApiKey key1 = apiKeyService.generateApiKey();
         apiKey1 = key1.rawApiKey();
@@ -111,7 +115,7 @@ class IdempotencyIntegrationTest {
     }
 
     @Test
-    @DisplayName("Repetição simples: mesma chave na mesma aplicação retorna 200 OK com Idempotent-Replayed: true e só envia 1 e-mail")
+    @DisplayName("Repetição simples: mesma chave na mesma aplicação retorna 200 OK com Idempotent-Replayed: true e só publica 1 vez")
     void shouldReplayExistingNotificationWhenSameKeyIsUsed() throws Exception {
         String idempotencyKey = "req-" + UUID.randomUUID();
         CreateNotificationRequest request = new CreateNotificationRequest(
@@ -121,20 +125,20 @@ class IdempotencyIntegrationTest {
                 Map.of("name", "Idempotente")
         );
 
-        // 1ª Requisição: criação
+        // 1ª Requisição: criação (202 Accepted)
         MvcResult firstResult = mockMvc.perform(post("/api/v1/notifications")
                         .header("X-API-Key", apiKey1)
                         .header("Idempotency-Key", idempotencyKey)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isCreated())
+                .andExpect(status().isAccepted())
                 .andExpect(header().doesNotExist("Idempotent-Replayed"))
                 .andReturn();
 
         JsonNode firstJson = objectMapper.readTree(firstResult.getResponse().getContentAsString());
         String firstId = firstJson.get("id").asText();
 
-        // 2ª Requisição: repetição
+        // 2ª Requisição: repetição (200 OK com Idempotent-Replayed: true)
         MvcResult secondResult = mockMvc.perform(post("/api/v1/notifications")
                         .header("X-API-Key", apiKey1)
                         .header("Idempotency-Key", idempotencyKey)
@@ -148,8 +152,8 @@ class IdempotencyIntegrationTest {
         String secondId = secondJson.get("id").asText();
 
         assertThat(firstId).isEqualTo(secondId);
-        // O sender deve ter sido invocado apenas UMA vez
-        verify(mailSender, times(1)).send(any(SimpleMailMessage.class));
+        // O publisher deve ter sido invocado apenas UMA vez
+        verify(notificationPublisher, times(1)).publish(any(UUID.class));
     }
 
     @Test
@@ -169,7 +173,7 @@ class IdempotencyIntegrationTest {
                         .header("Idempotency-Key", sharedKey)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isCreated())
+                .andExpect(status().isAccepted())
                 .andReturn();
 
         // Disparo pela App 2 com a MESMA chave
@@ -178,7 +182,7 @@ class IdempotencyIntegrationTest {
                         .header("Idempotency-Key", sharedKey)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isCreated())
+                .andExpect(status().isAccepted())
                 .andReturn();
 
         JsonNode json1 = objectMapper.readTree(resultApp1.getResponse().getContentAsString());
@@ -188,11 +192,11 @@ class IdempotencyIntegrationTest {
         String id2 = json2.get("id").asText();
 
         assertThat(id1).isNotEqualTo(id2);
-        verify(mailSender, times(2)).send(any(SimpleMailMessage.class));
+        verify(notificationPublisher, times(2)).publish(any(UUID.class));
     }
 
     @Test
-    @DisplayName("Concorrência: múltiplas threads simultâneas com a mesma chave geram exatamente 1 notificação e 1 envio")
+    @DisplayName("Concorrência: múltiplas threads simultâneas com a mesma chave geram exatamente 1 notificação e 1 publicação")
     void shouldHandleConcurrentRequestsSafely() throws Exception {
         String concurrentKey = "race-key-" + UUID.randomUUID();
         CreateNotificationRequest request = new CreateNotificationRequest(
@@ -231,7 +235,7 @@ class IdempotencyIntegrationTest {
         for (Future<MvcResult> future : futures) {
             MvcResult result = future.get();
             int status = result.getResponse().getStatus();
-            if (status == 201) {
+            if (status == 202) {
                 createdCount.incrementAndGet();
             } else if (status == 200 && "true".equals(result.getResponse().getHeader("Idempotent-Replayed"))) {
                 replayedCount.incrementAndGet();
@@ -240,13 +244,13 @@ class IdempotencyIntegrationTest {
 
         executor.shutdown();
 
-        // Exatamente UMA thread obteve 201 Created
+        // Exatamente UMA thread obteve 202 Accepted
         assertThat(createdCount.get()).isEqualTo(1);
         // Todas as outras obtiveram 200 com Idempotent-Replayed: true
         assertThat(replayedCount.get()).isEqualTo(totalThreads - 1);
 
-        // O e-mail foi enviado exatamente UMA vez
-        verify(mailSender, times(1)).send(any(SimpleMailMessage.class));
+        // A publicação na fila ocorreu exatamente UMA vez
+        verify(notificationPublisher, times(1)).publish(any(UUID.class));
 
         // No banco de dados, existe exatamente uma notificação para essa chave
         assertThat(notificationRepository.findByApplicationIdAndIdempotencyKey(app1.getId(), concurrentKey))

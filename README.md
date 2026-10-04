@@ -20,9 +20,20 @@ Desenvolvido com **Java 21**, **Spring Boot 4**, **MySQL 8.4** e conformidade co
 
 ## Visão Geral e Arquitetura
 
-- **Transações Curtas e I/O Desacoplado:** Chamadas externas de envio (SMTP/provedores) ocorrem rigorosamente fora de transações de banco de dados, eliminando lock e saturação de pools.
+- **Transações Curtas e I/O Desacoplado:** Chamadas de mensageria e provedores ocorrem rigorosamente fora de transações de banco de dados, eliminando locks e saturação de pools.
+- **Mensageria e Filas (RabbitMQ):** Disparo assíncrono com publisher confirms, mensagens persistentes, filas de retry com TTL e Dead Letter Queue (DLQ).
 - **Formato de Erro Padronizado:** Erros de validação, conflito e falhas de negócio respondem via `ProblemDetail` (RFC 9457) sem expor stack traces.
 - **Banco de Dados:** MySQL 8.4 (`utf8mb4`, collation `utf8mb4_unicode_ci`, datas em UTC `DATETIME(6)`), gerenciado via Flyway.
+
+### Limite Conhecido e Resiliência da Fila (PENDING / QUEUED)
+
+> [!WARNING]
+> Ao receber uma solicitação de disparo (`POST /api/v1/notifications`), o serviço primeiro grava a notificação como `PENDING` no banco de dados e, logo em seguida, publica o identificador (`notificationId`) na fila do RabbitMQ com publisher confirms. Com a confirmação do broker, a notificação transiciona para `QUEUED` e a API responde `202 Accepted`.
+>
+> Se a publicação no RabbitMQ falhar (ex.: instabilidade no broker), a notificação permanece no banco de dados com status `PENDING` e a API responde `503 Service Unavailable` (RFC 9457).
+>
+> **Risco:** Notificações em estado `PENDING` sem mensagem correspondente na fila.
+> **Evoluções planejadas:** Implementação do padrão *Transactional Outbox* ou rotina periódica de reconciliação para buscar e republicar registros `PENDING` com tempo de criação expirado.
 
 ---
 
@@ -36,13 +47,18 @@ Desenvolvido com **Java 21**, **Spring Boot 4**, **MySQL 8.4** e conformidade co
 
 ## Execução Local (Desenvolvimento)
 
-No ambiente local, o banco de dados MySQL e o emulador de e-mails **Mailpit** rodam via Docker Compose:
+No ambiente local, o banco de dados MySQL, o RabbitMQ e o emulador de e-mails **Mailpit** rodam via Docker Compose:
 
-1. **Subir os serviços locais (MySQL e Mailpit):**
+1. **Subir os serviços locais (MySQL, RabbitMQ e Mailpit):**
    ```bash
    docker compose up -d
    ```
-   *Nota: O MySQL local expõe a porta `3309` no host (mapeada para `3306` interna) e o Mailpit expõe a porta `1025` (SMTP) e `8025` (Interface Web).*
+   *Serviços disponíveis no host:*
+   - **MySQL 8.4:** `127.0.0.1:3309` (interno `3306`)
+   - **RabbitMQ AMQP:** `127.0.0.1:5672`
+   - **RabbitMQ Management UI:** `http://localhost:15672` (usuário: `guest`, senha: `guest`)
+   - **Mailpit SMTP:** `127.0.0.1:1025`
+   - **Mailpit Web UI:** `http://localhost:8025`
 
 2. **Executar a aplicação Spring Boot:**
    ```bash

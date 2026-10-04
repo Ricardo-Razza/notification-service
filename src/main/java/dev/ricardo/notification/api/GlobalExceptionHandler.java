@@ -8,6 +8,7 @@ import dev.ricardo.notification.domain.InvalidAdminTokenException;
 import dev.ricardo.notification.domain.InvalidNotificationException;
 import dev.ricardo.notification.domain.InvalidTemplateException;
 import dev.ricardo.notification.domain.NotificationNotFoundException;
+import dev.ricardo.notification.domain.NotificationPublishException;
 import dev.ricardo.notification.domain.TemplateNotFoundException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
@@ -76,6 +77,19 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(AdminDisabledException.class)
     public ProblemDetail handleAdminDisabled(AdminDisabledException ex) {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE, ex.getMessage());
+        problem.setTitle("Service Unavailable");
+        problem.setType(URI.create("urn:problem-type:service-unavailable"));
+        problem.setProperty("timestamp", Instant.now());
+        return problem;
+    }
+
+    @ExceptionHandler(NotificationPublishException.class)
+    public ProblemDetail handleNotificationPublish(NotificationPublishException ex) {
+        log.error("Notification queue publication failed: {}", ex.getMessage());
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.SERVICE_UNAVAILABLE,
+                "Unable to queue notification for delivery. Service temporarily unavailable."
+        );
         problem.setTitle("Service Unavailable");
         problem.setType(URI.create("urn:problem-type:service-unavailable"));
         problem.setProperty("timestamp", Instant.now());

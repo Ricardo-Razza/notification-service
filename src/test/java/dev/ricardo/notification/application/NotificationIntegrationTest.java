@@ -26,6 +26,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -76,11 +77,16 @@ class NotificationIntegrationTest {
     @MockitoBean
     private JavaMailSender mailSender;
 
+    @MockitoBean
+    private NotificationPublisher notificationPublisher;
+
     private String testApiKey;
     private dev.ricardo.notification.infrastructure.persistence.ApplicationEntity testApp;
 
     @org.junit.jupiter.api.BeforeEach
     void setUp() {
+        notificationRepository.deleteAll();
+
         dev.ricardo.notification.domain.ApiKeyService.GeneratedApiKey key = apiKeyService.generateApiKey();
         testApiKey = key.rawApiKey();
         testApp = applicationRepository.save(dev.ricardo.notification.infrastructure.persistence.ApplicationEntity.builder()
@@ -91,7 +97,7 @@ class NotificationIntegrationTest {
     }
 
     @Test
-    @DisplayName("Ponta a ponta: Notificação enviada com sucesso é salva no banco como SENT e grava application_id")
+    @DisplayName("Ponta a ponta: Notificação publicada com sucesso é salva no banco como QUEUED e grava application_id")
     void shouldExecuteFullFlowAndSaveSentStatusInDatabase() throws Exception {
         CreateNotificationRequest request = new CreateNotificationRequest(
                 "ricardo@dominio.com.br",
@@ -104,37 +110,32 @@ class NotificationIntegrationTest {
                         .header("X-API-Key", testApiKey)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.status").value("SENT"))
-                .andExpect(jsonPath("$.attempts").value(1))
-                .andExpect(jsonPath("$.sentAt").exists())
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.status").value("QUEUED"))
+                .andExpect(jsonPath("$.attempts").value(0))
+                .andExpect(jsonPath("$.sentAt").doesNotExist())
                 .andExpect(jsonPath("$.lastError").doesNotExist())
                 .andReturn();
 
         JsonNode responseJson = objectMapper.readTree(result.getResponse().getContentAsString());
         UUID id = UUID.fromString(responseJson.get("id").asText());
 
-        ArgumentCaptor<SimpleMailMessage> mailCaptor = ArgumentCaptor.forClass(SimpleMailMessage.class);
-        verify(mailSender).send(mailCaptor.capture());
-        SimpleMailMessage sentMail = mailCaptor.getValue();
-        assertThat(sentMail.getTo()).contains("ricardo@dominio.com.br");
-        assertThat(sentMail.getSubject()).isEqualTo("Bem-vindo, Ricardo Razza!");
-        assertThat(sentMail.getText()).contains("seja bem-vindo ao sistema.");
+        verify(notificationPublisher).publish(id);
 
         Optional<NotificationEntity> inDb = notificationRepository.findById(id);
         assertThat(inDb).isPresent();
-        assertThat(inDb.get().getStatus()).isEqualTo(NotificationStatus.SENT);
-        assertThat(inDb.get().getSentAt()).isNotNull();
-        assertThat(inDb.get().getAttempts()).isEqualTo(1);
+        assertThat(inDb.get().getStatus()).isEqualTo(NotificationStatus.QUEUED);
+        assertThat(inDb.get().getSentAt()).isNull();
+        assertThat(inDb.get().getAttempts()).isEqualTo(0);
         assertThat(inDb.get().getLastError()).isNull();
         assertThat(inDb.get().getApplicationId()).isEqualTo(testApp.getId());
     }
 
     @Test
-    @DisplayName("Ponta a ponta: Falha do JavaMailSender grava status FAILED no banco sem retornar 500")
+    @DisplayName("Ponta a ponta: Falha na publicação da fila mantém status PENDING e responde 503")
     void shouldExecuteFullFlowAndSaveFailedStatusWhenMailSenderFails() throws Exception {
-        doThrow(new MailSendException("SMTP connection timed out"))
-                .when(mailSender).send(any(SimpleMailMessage.class));
+        doThrow(new dev.ricardo.notification.domain.NotificationPublishException("RabbitMQ broker connection refused"))
+                .when(notificationPublisher).publish(any(UUID.class));
 
         CreateNotificationRequest request = new CreateNotificationRequest(
                 "falha@dominio.com.br",
@@ -143,26 +144,20 @@ class NotificationIntegrationTest {
                 Map.of("name", "Usuário Falha")
         );
 
-        MvcResult result = mockMvc.perform(post("/api/v1/notifications")
+        mockMvc.perform(post("/api/v1/notifications")
                         .header("X-API-Key", testApiKey)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.status").value("FAILED"))
-                .andExpect(jsonPath("$.attempts").value(1))
-                .andExpect(jsonPath("$.sentAt").doesNotExist())
-                .andExpect(jsonPath("$.lastError").value("SMTP connection timed out"))
-                .andReturn();
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.type").value("urn:problem-type:service-unavailable"))
+                .andExpect(jsonPath("$.title").value("Service Unavailable"));
 
-        JsonNode responseJson = objectMapper.readTree(result.getResponse().getContentAsString());
-        UUID id = UUID.fromString(responseJson.get("id").asText());
-
-        Optional<NotificationEntity> inDb = notificationRepository.findById(id);
-        assertThat(inDb).isPresent();
-        assertThat(inDb.get().getStatus()).isEqualTo(NotificationStatus.FAILED);
-        assertThat(inDb.get().getAttempts()).isEqualTo(1);
-        assertThat(inDb.get().getLastError()).contains("SMTP connection timed out");
-        assertThat(inDb.get().getApplicationId()).isEqualTo(testApp.getId());
+        // Verificar que o registro criado no banco permaneceu PENDING
+        List<NotificationEntity> entities = notificationRepository.findAll();
+        assertThat(entities).hasSize(1);
+        assertThat(entities.get(0).getStatus()).isEqualTo(NotificationStatus.PENDING);
+        assertThat(entities.get(0).getAttempts()).isEqualTo(0);
+        assertThat(entities.get(0).getApplicationId()).isEqualTo(testApp.getId());
     }
 
     @Test

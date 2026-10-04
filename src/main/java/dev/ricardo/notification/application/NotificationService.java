@@ -7,6 +7,7 @@ import dev.ricardo.notification.api.SendNotificationResult;
 import dev.ricardo.notification.domain.InvalidNotificationException;
 import dev.ricardo.notification.domain.NotificationChannel;
 import dev.ricardo.notification.domain.NotificationNotFoundException;
+import dev.ricardo.notification.domain.NotificationPublishException;
 import dev.ricardo.notification.domain.NotificationSender;
 import dev.ricardo.notification.domain.NotificationStatus;
 import dev.ricardo.notification.domain.RenderedMessage;
@@ -50,6 +51,7 @@ public class NotificationService {
     private final TemplateRepository templateRepository;
     private final TemplateRenderer templateRenderer;
     private final SenderFactory senderFactory;
+    private final NotificationPublisher notificationPublisher;
     private final TransactionTemplate transactionTemplate;
 
     public NotificationResponse sendNotification(CreateNotificationRequest request) {
@@ -84,19 +86,19 @@ public class NotificationService {
 
         validateRecipient(request.channel(), request.recipient());
 
+        senderFactory.get(request.channel());
+
         TemplateEntity template = templateRepository.findByCodeAndChannel(request.template(), request.channel())
                 .orElseThrow(() -> new TemplateNotFoundException(
                         String.format("Template '%s' not found for channel '%s'", request.template(), request.channel())
                 ));
 
-        NotificationSender sender = senderFactory.get(request.channel());
-
         Map<String, String> variables = request.safeVariables();
-        String renderedSubject = template.getSubject() != null
-                ? templateRenderer.render(template.getSubject(), variables)
-                : null;
-        String renderedBody = templateRenderer.render(template.getContent(), variables);
-        RenderedMessage message = new RenderedMessage(request.recipient(), renderedSubject, renderedBody);
+        // Validar variáveis do template antes de enfileirar
+        if (template.getSubject() != null) {
+            templateRenderer.render(template.getSubject(), variables);
+        }
+        templateRenderer.render(template.getContent(), variables);
 
         NotificationEntity notification;
         try {
@@ -127,45 +129,26 @@ public class NotificationService {
             throw ex;
         }
 
-        transactionTemplate.executeWithoutResult(status -> {
-            NotificationEntity entity = notificationRepository.findById(notification.getId())
-                    .orElseThrow(() -> new NotificationNotFoundException(notification.getId()));
-            entity.setStatus(NotificationStatus.PROCESSING);
-            notificationRepository.save(entity);
-            log.info("Notification {} transitioned to PROCESSING", notification.getId());
-        });
-
-        boolean sendSuccess = false;
-        String errorMessage = null;
+        // Publica fora da transação do banco (sem I/O dentro de transação)
         try {
-            sender.send(message);
-            sendSuccess = true;
-            log.info("Notification {} dispatched successfully via channel {}", notification.getId(), request.channel());
+            notificationPublisher.publish(notification.getId());
         } catch (Exception ex) {
-            log.error("Failed to dispatch notification {} via channel {}: {}", notification.getId(), request.channel(), ex.getMessage());
-            errorMessage = ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName();
+            log.error("Failed to publish notification {} to messaging queue. Leaving in status PENDING.", notification.getId(), ex);
+            throw (ex instanceof NotificationPublishException npe)
+                    ? npe
+                    : new NotificationPublishException("Failed to publish notification to queue", ex);
         }
 
-        final boolean finalSuccess = sendSuccess;
-        final String finalErrorMessage = errorMessage;
-        NotificationEntity finalEntity = transactionTemplate.execute(status -> {
+        NotificationEntity queuedEntity = transactionTemplate.execute(status -> {
             NotificationEntity entity = notificationRepository.findById(notification.getId())
                     .orElseThrow(() -> new NotificationNotFoundException(notification.getId()));
-            entity.setAttempts(1);
-            if (finalSuccess) {
-                entity.setStatus(NotificationStatus.SENT);
-                entity.setSentAt(Instant.now());
-                entity.setLastError(null);
-            } else {
-                entity.setStatus(NotificationStatus.FAILED);
-                entity.setLastError(finalErrorMessage);
-            }
+            entity.setStatus(NotificationStatus.QUEUED);
             NotificationEntity saved = notificationRepository.save(entity);
-            log.info("Notification {} completed with status {}", saved.getId(), saved.getStatus());
+            log.info("Notification {} transitioned to QUEUED", saved.getId());
             return saved;
         });
 
-        return new SendNotificationResult(NotificationResponse.from(finalEntity), false);
+        return new SendNotificationResult(NotificationResponse.from(queuedEntity), false);
     }
 
     @Transactional(readOnly = true)
