@@ -2,6 +2,7 @@ package dev.ricardo.notification.application;
 
 import dev.ricardo.notification.api.CreateNotificationRequest;
 import dev.ricardo.notification.api.NotificationResponse;
+import dev.ricardo.notification.api.SendNotificationResult;
 import dev.ricardo.notification.domain.InvalidNotificationException;
 import dev.ricardo.notification.domain.NotificationChannel;
 import dev.ricardo.notification.domain.NotificationNotFoundException;
@@ -16,12 +17,14 @@ import dev.ricardo.notification.infrastructure.persistence.TemplateRepository;
 import dev.ricardo.notification.template.TemplateRenderer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
@@ -39,10 +42,35 @@ public class NotificationService {
     private final TransactionTemplate transactionTemplate;
 
     public NotificationResponse sendNotification(CreateNotificationRequest request) {
-        return sendNotification(request, null);
+        return sendNotification(request, null, null).response();
     }
 
     public NotificationResponse sendNotification(CreateNotificationRequest request, UUID applicationId) {
+        return sendNotification(request, applicationId, null).response();
+    }
+
+    public SendNotificationResult sendNotification(
+            CreateNotificationRequest request,
+            UUID applicationId,
+            String idempotencyKey
+    ) {
+        String cleanIdempotencyKey = (idempotencyKey != null && !idempotencyKey.isBlank())
+                ? idempotencyKey.trim()
+                : null;
+
+        if (cleanIdempotencyKey != null && cleanIdempotencyKey.length() > 255) {
+            throw new InvalidNotificationException("Idempotency-Key header cannot exceed 255 characters");
+        }
+
+        if (cleanIdempotencyKey != null && applicationId != null) {
+            Optional<NotificationEntity> existing = notificationRepository
+                    .findByApplicationIdAndIdempotencyKey(applicationId, cleanIdempotencyKey);
+            if (existing.isPresent()) {
+                log.info("Idempotent request replayed for notification {} with key '{}'", existing.get().getId(), cleanIdempotencyKey);
+                return new SendNotificationResult(NotificationResponse.from(existing.get()), true);
+            }
+        }
+
         validateRecipient(request.channel(), request.recipient());
 
         TemplateEntity template = templateRepository.findByCodeAndChannel(request.template(), request.channel())
@@ -59,20 +87,34 @@ public class NotificationService {
         String renderedBody = templateRenderer.render(template.getContent(), variables);
         RenderedMessage message = new RenderedMessage(request.recipient(), renderedSubject, renderedBody);
 
-        NotificationEntity notification = transactionTemplate.execute(status -> {
-            NotificationEntity entity = NotificationEntity.builder()
-                    .applicationId(applicationId)
-                    .channel(request.channel())
-                    .recipient(request.recipient())
-                    .templateCode(request.template())
-                    .payload(variables)
-                    .status(NotificationStatus.PENDING)
-                    .attempts(0)
-                    .build();
-            NotificationEntity saved = notificationRepository.save(entity);
-            log.info("Notification {} created with status PENDING for channel {}", saved.getId(), saved.getChannel());
-            return saved;
-        });
+        NotificationEntity notification;
+        try {
+            notification = transactionTemplate.execute(status -> {
+                NotificationEntity entity = NotificationEntity.builder()
+                        .applicationId(applicationId)
+                        .channel(request.channel())
+                        .recipient(request.recipient())
+                        .templateCode(request.template())
+                        .payload(variables)
+                        .status(NotificationStatus.PENDING)
+                        .attempts(0)
+                        .idempotencyKey(cleanIdempotencyKey)
+                        .build();
+                NotificationEntity saved = notificationRepository.save(entity);
+                log.info("Notification {} created with status PENDING for channel {}", saved.getId(), saved.getChannel());
+                return saved;
+            });
+        } catch (DataIntegrityViolationException ex) {
+            if (cleanIdempotencyKey != null && applicationId != null) {
+                Optional<NotificationEntity> existing = notificationRepository
+                        .findByApplicationIdAndIdempotencyKey(applicationId, cleanIdempotencyKey);
+                if (existing.isPresent()) {
+                    log.info("Concurrent race handled: returning existing notification {} for key '{}'", existing.get().getId(), cleanIdempotencyKey);
+                    return new SendNotificationResult(NotificationResponse.from(existing.get()), true);
+                }
+            }
+            throw ex;
+        }
 
         transactionTemplate.executeWithoutResult(status -> {
             NotificationEntity entity = notificationRepository.findById(notification.getId())
@@ -112,7 +154,7 @@ public class NotificationService {
             return saved;
         });
 
-        return NotificationResponse.from(finalEntity);
+        return new SendNotificationResult(NotificationResponse.from(finalEntity), false);
     }
 
     @Transactional(readOnly = true)

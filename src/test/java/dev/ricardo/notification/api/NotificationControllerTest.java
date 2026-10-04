@@ -65,7 +65,8 @@ class NotificationControllerTest {
                 null
         );
 
-        when(notificationService.sendNotification(any(CreateNotificationRequest.class), any())).thenReturn(response);
+        when(notificationService.sendNotification(any(CreateNotificationRequest.class), any(), any()))
+                .thenReturn(new SendNotificationResult(response, false));
 
         mockMvc.perform(post("/api/v1/notifications")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -80,6 +81,42 @@ class NotificationControllerTest {
                 .andExpect(jsonPath("$.attempts", is(1)))
                 .andExpect(jsonPath("$.sentAt").exists())
                 .andExpect(jsonPath("$.lastError").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("POST /api/v1/notifications com Idempotency-Key repetida deve responder 200 com header Idempotent-Replayed: true")
+    void shouldReturnOkWithIdempotentReplayedHeaderWhenKeyAlreadyExists() throws Exception {
+        UUID id = UUID.randomUUID();
+        CreateNotificationRequest request = new CreateNotificationRequest(
+                "ricardo@exemplo.com",
+                NotificationChannel.EMAIL,
+                "WELCOME",
+                Map.of("name", "Ricardo")
+        );
+
+        NotificationResponse response = new NotificationResponse(
+                id,
+                NotificationStatus.SENT,
+                NotificationChannel.EMAIL,
+                "ricardo@exemplo.com",
+                "WELCOME",
+                1,
+                Instant.now(),
+                Instant.now(),
+                null
+        );
+
+        when(notificationService.sendNotification(any(CreateNotificationRequest.class), any(), any()))
+                .thenReturn(new SendNotificationResult(response, true));
+
+        mockMvc.perform(post("/api/v1/notifications")
+                        .header("Idempotency-Key", "req-12345")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Idempotent-Replayed", "true"))
+                .andExpect(jsonPath("$.id", is(id.toString())))
+                .andExpect(jsonPath("$.status", is("SENT")));
     }
 
     @Test
@@ -110,7 +147,7 @@ class NotificationControllerTest {
                 Map.of()
         );
 
-        when(notificationService.sendNotification(any(CreateNotificationRequest.class), any()))
+        when(notificationService.sendNotification(any(CreateNotificationRequest.class), any(), any()))
                 .thenThrow(new TemplateNotFoundException("Template not found"));
 
         mockMvc.perform(post("/api/v1/notifications")
@@ -131,7 +168,7 @@ class NotificationControllerTest {
                 Map.of()
         );
 
-        when(notificationService.sendNotification(any(CreateNotificationRequest.class), any()))
+        when(notificationService.sendNotification(any(CreateNotificationRequest.class), any(), any()))
                 .thenThrow(new MissingTemplateVariableException("name"));
 
         mockMvc.perform(post("/api/v1/notifications")
@@ -153,7 +190,7 @@ class NotificationControllerTest {
                 Map.of()
         );
 
-        when(notificationService.sendNotification(any(CreateNotificationRequest.class), any()))
+        when(notificationService.sendNotification(any(CreateNotificationRequest.class), any(), any()))
                 .thenThrow(new UnsupportedChannelException(NotificationChannel.SMS));
 
         mockMvc.perform(post("/api/v1/notifications")
