@@ -13,4 +13,6 @@ public interface TemplateRepository extends JpaRepository<TemplateEntity, UUID> 
     Optional<TemplateEntity> findByCodeAndChannel(String code, NotificationChannel channel);
 
     boolean existsByCodeAndChannel(String code, NotificationChannel channel);
+
+    java.util.List<TemplateEntity> findByChannel(NotificationChannel channel);
 }
