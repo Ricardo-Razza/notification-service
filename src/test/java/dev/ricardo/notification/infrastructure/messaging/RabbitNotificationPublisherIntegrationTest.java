@@ -87,11 +87,15 @@ class RabbitNotificationPublisherIntegrationTest {
     @Autowired
     private ApiKeyService apiKeyService;
 
+    @Autowired
+    private org.springframework.amqp.rabbit.listener.RabbitListenerEndpointRegistry rabbitListenerEndpointRegistry;
+
     private String apiKey;
     private ApplicationEntity app;
 
     @BeforeEach
     void setUp() {
+        rabbitListenerEndpointRegistry.stop();
         // Purge a fila principal antes de cada teste
         rabbitTemplate.execute(channel -> {
             channel.queuePurge("notification.queue");

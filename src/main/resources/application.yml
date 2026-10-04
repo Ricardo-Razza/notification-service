@@ -36,8 +36,15 @@ spring:
     password: ${SPRING_RABBITMQ_PASSWORD:${RABBITMQ_PASSWORD:guest}}
     publisher-confirm-type: correlated
     publisher-returns: true
+    listener:
+      simple:
+        acknowledge-mode: manual
+        concurrency: ${RABBITMQ_CONCURRENCY:2}
+        max-concurrency: ${RABBITMQ_MAX_CONCURRENCY:5}
 
 app:
+  notification:
+    max-attempts: ${NOTIFICATION_MAX_ATTEMPTS:3}
   mail:
     from: ${MAIL_FROM:no-reply@notification.local}
   rabbitmq:

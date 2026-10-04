@@ -12,6 +12,9 @@ import dev.ricardo.notification.domain.NotificationSender;
 import dev.ricardo.notification.domain.NotificationStatus;
 import dev.ricardo.notification.domain.RenderedMessage;
 import dev.ricardo.notification.domain.TemplateNotFoundException;
+import dev.ricardo.notification.api.NotificationAttemptResponse;
+import dev.ricardo.notification.infrastructure.persistence.NotificationAttemptEntity;
+import dev.ricardo.notification.infrastructure.persistence.NotificationAttemptRepository;
 import dev.ricardo.notification.infrastructure.persistence.NotificationEntity;
 import dev.ricardo.notification.infrastructure.persistence.NotificationRepository;
 import dev.ricardo.notification.infrastructure.persistence.NotificationSpecification;
@@ -48,6 +51,7 @@ public class NotificationService {
     private static final Pattern EMAIL_PATTERN = Pattern.compile("^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$");
 
     private final NotificationRepository notificationRepository;
+    private final NotificationAttemptRepository attemptRepository;
     private final TemplateRepository templateRepository;
     private final TemplateRenderer templateRenderer;
     private final SenderFactory senderFactory;
@@ -163,7 +167,11 @@ public class NotificationService {
         if (applicationId != null && !applicationId.equals(entity.getApplicationId())) {
             throw new NotificationNotFoundException(id);
         }
-        return NotificationResponse.from(entity);
+        var attempts = attemptRepository.findByNotificationIdOrderByAttemptNumberAsc(id);
+        var attemptResponses = attempts.stream()
+                .map(NotificationAttemptResponse::from)
+                .toList();
+        return NotificationResponse.from(entity, attemptResponses);
     }
 
     @Transactional(readOnly = true)

@@ -118,7 +118,7 @@ public class RabbitConfig {
 
     @Bean
     public MessageConverter messageConverter() {
-        return new JacksonJsonMessageConverter();
+        return new JacksonJsonMessageConverter("*");
     }
 
     @Bean
@@ -127,5 +127,20 @@ public class RabbitConfig {
         template.setMessageConverter(messageConverter);
         template.setMandatory(true);
         return template;
+    }
+
+    @Bean
+    public org.springframework.amqp.rabbit.config.SimpleRabbitListenerContainerFactory rabbitListenerContainerFactory(
+            ConnectionFactory connectionFactory,
+            @Value("${app.rabbitmq.concurrency:2}") int concurrency,
+            @Value("${app.rabbitmq.max-concurrency:5}") int maxConcurrency) {
+        org.springframework.amqp.rabbit.config.SimpleRabbitListenerContainerFactory factory =
+                new org.springframework.amqp.rabbit.config.SimpleRabbitListenerContainerFactory();
+        factory.setConnectionFactory(connectionFactory);
+        factory.setAcknowledgeMode(org.springframework.amqp.core.AcknowledgeMode.MANUAL);
+        factory.setConcurrentConsumers(concurrency);
+        factory.setMaxConcurrentConsumers(maxConcurrency);
+        factory.setMessageConverter(new org.springframework.amqp.support.converter.SimpleMessageConverter());
+        return factory;
     }
 }

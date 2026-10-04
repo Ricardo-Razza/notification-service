@@ -5,6 +5,7 @@ import dev.ricardo.notification.domain.NotificationStatus;
 import dev.ricardo.notification.infrastructure.persistence.NotificationEntity;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 public record NotificationResponse(
@@ -16,9 +17,28 @@ public record NotificationResponse(
         int attempts,
         Instant createdAt,
         Instant sentAt,
-        String lastError
+        String lastError,
+        List<NotificationAttemptResponse> attemptsHistory
 ) {
+    public NotificationResponse(
+            UUID id,
+            NotificationStatus status,
+            NotificationChannel channel,
+            String recipient,
+            String template,
+            int attempts,
+            Instant createdAt,
+            Instant sentAt,
+            String lastError
+    ) {
+        this(id, status, channel, recipient, template, attempts, createdAt, sentAt, lastError, List.of());
+    }
+
     public static NotificationResponse from(NotificationEntity entity) {
+        return from(entity, List.of());
+    }
+
+    public static NotificationResponse from(NotificationEntity entity, List<NotificationAttemptResponse> attemptsHistory) {
         return new NotificationResponse(
                 entity.getId(),
                 entity.getStatus(),
@@ -28,7 +48,8 @@ public record NotificationResponse(
                 entity.getAttempts(),
                 entity.getCreatedAt(),
                 entity.getSentAt(),
-                entity.getLastError()
+                entity.getLastError(),
+                attemptsHistory != null ? attemptsHistory : List.of()
         );
     }
 }

@@ -50,6 +50,9 @@ class NotificationServiceTest {
     private NotificationRepository notificationRepository;
 
     @Mock
+    private dev.ricardo.notification.infrastructure.persistence.NotificationAttemptRepository attemptRepository;
+
+    @Mock
     private TemplateRepository templateRepository;
 
     @Mock
