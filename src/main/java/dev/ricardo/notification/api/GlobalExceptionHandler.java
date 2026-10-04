@@ -1,6 +1,10 @@
 package dev.ricardo.notification.api;
 
+import dev.ricardo.notification.domain.AdminDisabledException;
+import dev.ricardo.notification.domain.ApplicationNotFoundException;
+import dev.ricardo.notification.domain.DuplicateApplicationNameException;
 import dev.ricardo.notification.domain.DuplicateTemplateException;
+import dev.ricardo.notification.domain.InvalidAdminTokenException;
 import dev.ricardo.notification.domain.InvalidNotificationException;
 import dev.ricardo.notification.domain.InvalidTemplateException;
 import dev.ricardo.notification.domain.NotificationNotFoundException;
@@ -38,6 +42,42 @@ public class GlobalExceptionHandler {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
         problem.setTitle("Conflict");
         problem.setType(URI.create("urn:problem-type:conflict"));
+        problem.setProperty("timestamp", Instant.now());
+        return problem;
+    }
+
+    @ExceptionHandler(DuplicateApplicationNameException.class)
+    public ProblemDetail handleDuplicateApplicationName(DuplicateApplicationNameException ex) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
+        problem.setTitle("Conflict");
+        problem.setType(URI.create("urn:problem-type:conflict"));
+        problem.setProperty("timestamp", Instant.now());
+        return problem;
+    }
+
+    @ExceptionHandler(ApplicationNotFoundException.class)
+    public ProblemDetail handleApplicationNotFound(ApplicationNotFoundException ex) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, ex.getMessage());
+        problem.setTitle("Resource Not Found");
+        problem.setType(URI.create("urn:problem-type:not-found"));
+        problem.setProperty("timestamp", Instant.now());
+        return problem;
+    }
+
+    @ExceptionHandler(InvalidAdminTokenException.class)
+    public ProblemDetail handleInvalidAdminToken(InvalidAdminTokenException ex) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.UNAUTHORIZED, ex.getMessage());
+        problem.setTitle("Unauthorized");
+        problem.setType(URI.create("urn:problem-type:unauthorized"));
+        problem.setProperty("timestamp", Instant.now());
+        return problem;
+    }
+
+    @ExceptionHandler(AdminDisabledException.class)
+    public ProblemDetail handleAdminDisabled(AdminDisabledException ex) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE, ex.getMessage());
+        problem.setTitle("Service Unavailable");
+        problem.setType(URI.create("urn:problem-type:service-unavailable"));
         problem.setProperty("timestamp", Instant.now());
         return problem;
     }

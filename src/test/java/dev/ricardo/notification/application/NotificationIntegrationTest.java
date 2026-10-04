@@ -67,11 +67,31 @@ class NotificationIntegrationTest {
     @Autowired
     private NotificationRepository notificationRepository;
 
+    @Autowired
+    private dev.ricardo.notification.infrastructure.persistence.ApplicationRepository applicationRepository;
+
+    @Autowired
+    private dev.ricardo.notification.domain.ApiKeyService apiKeyService;
+
     @MockitoBean
     private JavaMailSender mailSender;
 
+    private String testApiKey;
+    private dev.ricardo.notification.infrastructure.persistence.ApplicationEntity testApp;
+
+    @org.junit.jupiter.api.BeforeEach
+    void setUp() {
+        dev.ricardo.notification.domain.ApiKeyService.GeneratedApiKey key = apiKeyService.generateApiKey();
+        testApiKey = key.rawApiKey();
+        testApp = applicationRepository.save(dev.ricardo.notification.infrastructure.persistence.ApplicationEntity.builder()
+                .name("Integration Test App " + UUID.randomUUID())
+                .apiKeyHash(key.hash())
+                .active(true)
+                .build());
+    }
+
     @Test
-    @DisplayName("Ponta a ponta: Notificação enviada com sucesso é salva no banco como SENT")
+    @DisplayName("Ponta a ponta: Notificação enviada com sucesso é salva no banco como SENT e grava application_id")
     void shouldExecuteFullFlowAndSaveSentStatusInDatabase() throws Exception {
         CreateNotificationRequest request = new CreateNotificationRequest(
                 "ricardo@dominio.com.br",
@@ -81,6 +101,7 @@ class NotificationIntegrationTest {
         );
 
         MvcResult result = mockMvc.perform(post("/api/v1/notifications")
+                        .header("X-API-Key", testApiKey)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isCreated())
@@ -106,6 +127,7 @@ class NotificationIntegrationTest {
         assertThat(inDb.get().getSentAt()).isNotNull();
         assertThat(inDb.get().getAttempts()).isEqualTo(1);
         assertThat(inDb.get().getLastError()).isNull();
+        assertThat(inDb.get().getApplicationId()).isEqualTo(testApp.getId());
     }
 
     @Test
@@ -122,6 +144,7 @@ class NotificationIntegrationTest {
         );
 
         MvcResult result = mockMvc.perform(post("/api/v1/notifications")
+                        .header("X-API-Key", testApiKey)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isCreated())
@@ -139,5 +162,24 @@ class NotificationIntegrationTest {
         assertThat(inDb.get().getStatus()).isEqualTo(NotificationStatus.FAILED);
         assertThat(inDb.get().getAttempts()).isEqualTo(1);
         assertThat(inDb.get().getLastError()).contains("SMTP connection timed out");
+        assertThat(inDb.get().getApplicationId()).isEqualTo(testApp.getId());
+    }
+
+    @Test
+    @DisplayName("Ponta a ponta: Requisição para /api/v1/notifications sem X-API-Key deve responder 401 ProblemDetail")
+    void shouldReturn401WhenApiKeyIsMissing() throws Exception {
+        CreateNotificationRequest request = new CreateNotificationRequest(
+                "ricardo@dominio.com.br",
+                NotificationChannel.EMAIL,
+                "WELCOME",
+                Map.of("name", "Ricardo")
+        );
+
+        mockMvc.perform(post("/api/v1/notifications")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.type").value("urn:problem-type:unauthorized"))
+                .andExpect(jsonPath("$.title").value("Unauthorized"));
     }
 }

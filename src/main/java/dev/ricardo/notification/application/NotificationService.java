@@ -39,6 +39,10 @@ public class NotificationService {
     private final TransactionTemplate transactionTemplate;
 
     public NotificationResponse sendNotification(CreateNotificationRequest request) {
+        return sendNotification(request, null);
+    }
+
+    public NotificationResponse sendNotification(CreateNotificationRequest request, UUID applicationId) {
         validateRecipient(request.channel(), request.recipient());
 
         TemplateEntity template = templateRepository.findByCodeAndChannel(request.template(), request.channel())
@@ -57,6 +61,7 @@ public class NotificationService {
 
         NotificationEntity notification = transactionTemplate.execute(status -> {
             NotificationEntity entity = NotificationEntity.builder()
+                    .applicationId(applicationId)
                     .channel(request.channel())
                     .recipient(request.recipient())
                     .templateCode(request.template())

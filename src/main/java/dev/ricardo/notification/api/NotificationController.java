@@ -23,8 +23,11 @@ public class NotificationController {
     private final NotificationService notificationService;
 
     @PostMapping
-    public ResponseEntity<NotificationResponse> sendNotification(@Valid @RequestBody CreateNotificationRequest request) {
-        NotificationResponse response = notificationService.sendNotification(request);
+    public ResponseEntity<NotificationResponse> sendNotification(
+            @org.springframework.web.bind.annotation.RequestAttribute(value = ApiKeyAuthFilter.AUTHENTICATED_APPLICATION_ID, required = false) UUID applicationId,
+            @Valid @RequestBody CreateNotificationRequest request
+    ) {
+        NotificationResponse response = notificationService.sendNotification(request, applicationId);
         URI location = ServletUriComponentsBuilder.fromCurrentRequest()
                 .path("/{id}")
                 .buildAndExpand(response.id())

@@ -65,7 +65,7 @@ class NotificationControllerTest {
                 null
         );
 
-        when(notificationService.sendNotification(any(CreateNotificationRequest.class))).thenReturn(response);
+        when(notificationService.sendNotification(any(CreateNotificationRequest.class), any())).thenReturn(response);
 
         mockMvc.perform(post("/api/v1/notifications")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -110,7 +110,7 @@ class NotificationControllerTest {
                 Map.of()
         );
 
-        when(notificationService.sendNotification(any(CreateNotificationRequest.class)))
+        when(notificationService.sendNotification(any(CreateNotificationRequest.class), any()))
                 .thenThrow(new TemplateNotFoundException("Template not found"));
 
         mockMvc.perform(post("/api/v1/notifications")
@@ -131,7 +131,7 @@ class NotificationControllerTest {
                 Map.of()
         );
 
-        when(notificationService.sendNotification(any(CreateNotificationRequest.class)))
+        when(notificationService.sendNotification(any(CreateNotificationRequest.class), any()))
                 .thenThrow(new MissingTemplateVariableException("name"));
 
         mockMvc.perform(post("/api/v1/notifications")
@@ -153,7 +153,7 @@ class NotificationControllerTest {
                 Map.of()
         );
 
-        when(notificationService.sendNotification(any(CreateNotificationRequest.class)))
+        when(notificationService.sendNotification(any(CreateNotificationRequest.class), any()))
                 .thenThrow(new UnsupportedChannelException(NotificationChannel.SMS));
 
         mockMvc.perform(post("/api/v1/notifications")
