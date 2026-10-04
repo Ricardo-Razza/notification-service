@@ -217,7 +217,8 @@ class NotificationControllerTest {
                 null
         );
 
-        when(notificationService.getNotificationById(id)).thenReturn(response);
+        when(notificationService.getNotificationById(org.mockito.ArgumentMatchers.eq(id), any()))
+                .thenReturn(response);
 
         mockMvc.perform(get("/api/v1/notifications/{id}", id))
                 .andExpect(status().isOk())
@@ -229,11 +230,65 @@ class NotificationControllerTest {
     @DisplayName("GET /api/v1/notifications/{id} deve responder 404 quando não existir")
     void shouldReturnNotFoundWhenNotificationDoesNotExist() throws Exception {
         UUID id = UUID.randomUUID();
-        when(notificationService.getNotificationById(id))
+        when(notificationService.getNotificationById(org.mockito.ArgumentMatchers.eq(id), any()))
                 .thenThrow(new NotificationNotFoundException(id));
 
         mockMvc.perform(get("/api/v1/notifications/{id}", id))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.type", is("urn:problem-type:not-found")));
+    }
+
+    @Test
+    @DisplayName("GET /api/v1/notifications deve retornar lista paginada com status 200")
+    void shouldReturnPaginatedNotifications() throws Exception {
+        UUID id = UUID.randomUUID();
+        NotificationResponse item = new NotificationResponse(
+                id,
+                NotificationStatus.SENT,
+                NotificationChannel.EMAIL,
+                "user@exemplo.com",
+                "WELCOME",
+                1,
+                Instant.now(),
+                Instant.now(),
+                null
+        );
+
+        PageResponse<NotificationResponse> pageResponse = new PageResponse<>(
+                java.util.List.of(item),
+                0,
+                20,
+                1L,
+                1
+        );
+
+        when(notificationService.getNotifications(any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(pageResponse);
+
+        mockMvc.perform(get("/api/v1/notifications")
+                        .param("status", "SENT")
+                        .param("channel", "EMAIL")
+                        .param("page", "0")
+                        .param("size", "20"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items.length()", is(1)))
+                .andExpect(jsonPath("$.items[0].id", is(id.toString())))
+                .andExpect(jsonPath("$.page", is(0)))
+                .andExpect(jsonPath("$.size", is(20)))
+                .andExpect(jsonPath("$.totalElements", is(1)))
+                .andExpect(jsonPath("$.totalPages", is(1)));
+    }
+
+    @Test
+    @DisplayName("GET /api/v1/notifications com filtro inválido deve retornar 400 Bad Request")
+    void shouldReturnBadRequestWhenFilterIsInvalid() throws Exception {
+        when(notificationService.getNotifications(any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenThrow(new dev.ricardo.notification.domain.InvalidNotificationException("Invalid status: 'INVALID'"));
+
+        mockMvc.perform(get("/api/v1/notifications")
+                        .param("status", "INVALID"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.type", is("urn:problem-type:bad-request")))
+                .andExpect(jsonPath("$.detail", containsString("Invalid status")));
     }
 }

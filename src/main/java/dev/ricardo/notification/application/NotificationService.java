@@ -2,6 +2,7 @@ package dev.ricardo.notification.application;
 
 import dev.ricardo.notification.api.CreateNotificationRequest;
 import dev.ricardo.notification.api.NotificationResponse;
+import dev.ricardo.notification.api.PageResponse;
 import dev.ricardo.notification.api.SendNotificationResult;
 import dev.ricardo.notification.domain.InvalidNotificationException;
 import dev.ricardo.notification.domain.NotificationChannel;
@@ -12,17 +13,27 @@ import dev.ricardo.notification.domain.RenderedMessage;
 import dev.ricardo.notification.domain.TemplateNotFoundException;
 import dev.ricardo.notification.infrastructure.persistence.NotificationEntity;
 import dev.ricardo.notification.infrastructure.persistence.NotificationRepository;
+import dev.ricardo.notification.infrastructure.persistence.NotificationSpecification;
 import dev.ricardo.notification.infrastructure.persistence.TemplateEntity;
 import dev.ricardo.notification.infrastructure.persistence.TemplateRepository;
 import dev.ricardo.notification.template.TemplateRenderer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.util.Arrays;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -159,9 +170,102 @@ public class NotificationService {
 
     @Transactional(readOnly = true)
     public NotificationResponse getNotificationById(UUID id) {
-        return notificationRepository.findById(id)
-                .map(NotificationResponse::from)
+        return getNotificationById(id, null);
+    }
+
+    @Transactional(readOnly = true)
+    public NotificationResponse getNotificationById(UUID id, UUID applicationId) {
+        NotificationEntity entity = notificationRepository.findById(id)
                 .orElseThrow(() -> new NotificationNotFoundException(id));
+        if (applicationId != null && !applicationId.equals(entity.getApplicationId())) {
+            throw new NotificationNotFoundException(id);
+        }
+        return NotificationResponse.from(entity);
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<NotificationResponse> getNotifications(
+            UUID applicationId,
+            String status,
+            String channel,
+            String recipient,
+            String createdFrom,
+            String createdTo,
+            Integer page,
+            Integer size
+    ) {
+        int pageIndex = (page != null) ? page : 0;
+        int pageSize = (size != null) ? size : 20;
+
+        if (pageIndex < 0) {
+            throw new InvalidNotificationException("Page index must be 0 or greater");
+        }
+        if (pageSize < 1 || pageSize > 100) {
+            throw new InvalidNotificationException("Page size must be between 1 and 100");
+        }
+
+        NotificationStatus parsedStatus = null;
+        if (status != null && !status.isBlank()) {
+            try {
+                parsedStatus = NotificationStatus.valueOf(status.trim().toUpperCase());
+            } catch (IllegalArgumentException ex) {
+                throw new InvalidNotificationException("Invalid status: '" + status + "'. Allowed values: " + Arrays.toString(NotificationStatus.values()));
+            }
+        }
+
+        NotificationChannel parsedChannel = null;
+        if (channel != null && !channel.isBlank()) {
+            try {
+                parsedChannel = NotificationChannel.valueOf(channel.trim().toUpperCase());
+            } catch (IllegalArgumentException ex) {
+                throw new InvalidNotificationException("Invalid channel: '" + channel + "'. Allowed values: " + Arrays.toString(NotificationChannel.values()));
+            }
+        }
+
+        String parsedRecipient = (recipient != null && !recipient.isBlank()) ? recipient.trim() : null;
+        Instant from = parseIsoDate(createdFrom, "createdFrom");
+        Instant to = parseIsoDate(createdTo, "createdTo");
+
+        if (from != null && to != null && from.isAfter(to)) {
+            throw new InvalidNotificationException("createdFrom cannot be after createdTo");
+        }
+
+        Pageable pageable = PageRequest.of(pageIndex, pageSize, Sort.by(Sort.Direction.DESC, "createdAt"));
+
+        Specification<NotificationEntity> spec = NotificationSpecification.withFilters(
+                applicationId,
+                parsedStatus,
+                parsedChannel,
+                parsedRecipient,
+                from,
+                to
+        );
+
+        Page<NotificationResponse> result = notificationRepository.findAll(spec, pageable)
+                .map(NotificationResponse::from);
+
+        return PageResponse.of(result);
+    }
+
+    private Instant parseIsoDate(String dateStr, String fieldName) {
+        if (dateStr == null || dateStr.isBlank()) {
+            return null;
+        }
+        try {
+            return Instant.parse(dateStr.trim());
+        } catch (Exception e1) {
+            try {
+                return OffsetDateTime.parse(dateStr.trim()).toInstant();
+            } catch (Exception e2) {
+                try {
+                    return LocalDateTime.parse(dateStr.trim()).toInstant(ZoneOffset.UTC);
+                } catch (Exception e3) {
+                    throw new InvalidNotificationException(
+                            String.format("Invalid ISO-8601 format for %s: '%s'", fieldName, dateStr)
+                    );
+                }
+            }
+        }
     }
 
     private void validateRecipient(NotificationChannel channel, String recipient) {

@@ -41,8 +41,34 @@ public class NotificationController {
         return ResponseEntity.created(location).body(result.response());
     }
 
+    @GetMapping
+    public PageResponse<NotificationResponse> getNotifications(
+            @org.springframework.web.bind.annotation.RequestAttribute(value = ApiKeyAuthFilter.AUTHENTICATED_APPLICATION_ID, required = false) UUID applicationId,
+            @org.springframework.web.bind.annotation.RequestParam(value = "status", required = false) String status,
+            @org.springframework.web.bind.annotation.RequestParam(value = "channel", required = false) String channel,
+            @org.springframework.web.bind.annotation.RequestParam(value = "recipient", required = false) String recipient,
+            @org.springframework.web.bind.annotation.RequestParam(value = "createdFrom", required = false) String createdFrom,
+            @org.springframework.web.bind.annotation.RequestParam(value = "createdTo", required = false) String createdTo,
+            @org.springframework.web.bind.annotation.RequestParam(value = "page", defaultValue = "0") Integer page,
+            @org.springframework.web.bind.annotation.RequestParam(value = "size", defaultValue = "20") Integer size
+    ) {
+        return notificationService.getNotifications(
+                applicationId,
+                status,
+                channel,
+                recipient,
+                createdFrom,
+                createdTo,
+                page,
+                size
+        );
+    }
+
     @GetMapping("/{id}")
-    public NotificationResponse getNotificationById(@PathVariable("id") UUID id) {
-        return notificationService.getNotificationById(id);
+    public NotificationResponse getNotificationById(
+            @org.springframework.web.bind.annotation.RequestAttribute(value = ApiKeyAuthFilter.AUTHENTICATED_APPLICATION_ID, required = false) UUID applicationId,
+            @PathVariable("id") UUID id
+    ) {
+        return notificationService.getNotificationById(id, applicationId);
     }
 }
