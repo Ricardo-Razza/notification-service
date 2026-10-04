@@ -1,0 +1,36 @@
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: notification-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${DB_NAME}
+      MYSQL_USER: ${DB_USER}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+      TZ: UTC
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      - --default-time-zone=+00:00
+    ports:
+      - "127.0.0.1:3309:3306"   # só acessível da própria máquina
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # Captura os e-mails localmente. Nada é enviado de verdade.
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: notification-mailpit
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:1025:1025"   # SMTP
+      - "127.0.0.1:8025:8025"   # interface web: http://localhost:8025
+
+volumes:
+  mysql_data:
