@@ -294,7 +294,26 @@ O serviço suporta o agendamento de notificações para liberação futura e can
 - **Transação Curta e `SKIP LOCKED`:** Busca registros com `status = 'SCHEDULED' AND scheduled_at <= :now ORDER BY scheduled_at ASC LIMIT :batchSize FOR UPDATE SKIP LOCKED`. Com isso, múltiplas instâncias da aplicação podem rodar em paralelo sem que duas instâncias processem a mesma notificação nem ocorram deadlocks.
 - **Política de Atraso (`max-lateness`):** Se a notificação venceu há mais tempo que `app.scheduler.max-lateness-seconds` (padrão: 3600 segundos / 1h), ela não é enviada atrasada; seu status é marcado como `FAILED` e `last_error` registra detalhadamente que o limite de tolerância expirou.
 
-### 4. Decisão Arquitetural: Falha na Publicação Pós-Commit
+### 4. Agendamentos Recorrentes (CRON)
+- Gerencie envios recorrentes via `/api/v1/schedules`:
+  - `POST /api/v1/schedules`: cria agendamento com expressão cron de 6 campos (formato Spring), fuso horário IANA (ex.: `America/Sao_Paulo`), template, destinatário, variáveis, e datas opcionais `startAt` e `endAt`.
+  - `GET /api/v1/schedules`: lista agendamentos da aplicação com paginação.
+  - `GET /api/v1/schedules/{id}`: consulta agendamento por ID.
+  - `PUT /api/v1/schedules/{id}`: altera configuração e recalcula `next_run_at`.
+  - `DELETE /api/v1/schedules/{id}`: remove o agendamento.
+  - `POST /api/v1/schedules/{id}/pause`: pausa o agendamento (`active = false`).
+  - `POST /api/v1/schedules/{id}/resume`: retoma o agendamento (`active = true`, recalculando `next_run_at` a partir de agora).
+- **Variáveis Dinâmicas de Sistema:**
+  - `{{today}}`: Data no fuso horário do agendamento (ex.: `2026-10-04`), resolvida dinamicamente no momento da ocorrência.
+  - `{{now}}`: Timestamp ISO-8601 com offset no fuso horário do agendamento.
+- **Tratamento de Ocorrências Perdidas (Serviço Fora do Ar):**
+  - Controlado por `app.scheduler.missed-occurrence-policy` (padrão: `SKIP_AND_GENERATE_LATEST`).
+  - Ao retomar após indisponibilidade com múltiplas ocorrências vencidas, o scheduler gera apenas a ocorrência mais recente, descarta as anteriores e registra o salto em log estruturado.
+- **Idempotência e Concorrência:**
+  - Cada ocorrência gera uma notificação com chave de idempotência determinística: `schedule-{scheduleId}-{instanteDaOcorrencia}`.
+  - A restrição única `(application_id, idempotency_key)` e o bloqueio transacional com `SKIP LOCKED` asseguram que nenhuma ocorrência seja gerada em duplicidade, mesmo com múltiplas instâncias concorrentes.
+
+### 5. Decisão Arquitetural: Falha na Publicação Pós-Commit
 > [!NOTE]
 > Em estrita conformidade com a arquitetura do projeto, **nenhuma operação de I/O de rede ou broker ocorre dentro de transações de banco de dados**.
 > Portanto:
@@ -353,4 +372,15 @@ curl -X GET http://localhost:8080/actuator/metrics/notifications.sent \
 - `GET  /api/v1/notifications` - Histórico filtrado com paginação e isolamento multitenant
 - `GET  /api/v1/notifications/{id}` - Consulta notificação e histórico de tentativas
 - `POST /api/v1/notifications/{id}/retry` - Reprocessa notificação com status FAILED
+- `DELETE /api/v1/notifications/{id}` - Cancela notificação com status SCHEDULED
+
+### Agendamentos Recorrentes (Schedules)
+
+- `POST /api/v1/schedules` - Cria agendamento recorrente com cron e fuso horário
+- `GET  /api/v1/schedules` - Lista agendamentos recorrentes com paginação
+- `GET  /api/v1/schedules/{id}` - Consulta agendamento recorrente por ID
+- `PUT  /api/v1/schedules/{id}` - Atualiza configurações do agendamento
+- `DELETE /api/v1/schedules/{id}` - Remove o agendamento recorrente
+- `POST /api/v1/schedules/{id}/pause` - Pausa agendamento recorrente
+- `POST /api/v1/schedules/{id}/resume` - Retoma agendamento recorrente recalculando próximo disparo
 

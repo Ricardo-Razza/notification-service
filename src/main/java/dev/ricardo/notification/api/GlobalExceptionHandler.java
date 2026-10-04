@@ -133,6 +133,33 @@ public class GlobalExceptionHandler {
         return problem;
     }
 
+    @ExceptionHandler(dev.ricardo.notification.domain.InvalidScheduleException.class)
+    public ProblemDetail handleInvalidSchedule(dev.ricardo.notification.domain.InvalidScheduleException ex) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, ex.getMessage());
+        problem.setTitle("Invalid Request");
+        problem.setType(URI.create("urn:problem-type:bad-request"));
+        problem.setProperty("timestamp", Instant.now());
+        return problem;
+    }
+
+    @ExceptionHandler(dev.ricardo.notification.domain.ScheduleNotFoundException.class)
+    public ProblemDetail handleScheduleNotFound(dev.ricardo.notification.domain.ScheduleNotFoundException ex) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, ex.getMessage());
+        problem.setTitle("Resource Not Found");
+        problem.setType(URI.create("urn:problem-type:not-found"));
+        problem.setProperty("timestamp", Instant.now());
+        return problem;
+    }
+
+    @ExceptionHandler(dev.ricardo.notification.domain.ScheduleConflictException.class)
+    public ProblemDetail handleScheduleConflict(dev.ricardo.notification.domain.ScheduleConflictException ex) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
+        problem.setTitle("Conflict");
+        problem.setType(URI.create("urn:problem-type:conflict"));
+        problem.setProperty("timestamp", Instant.now());
+        return problem;
+    }
+
     @ExceptionHandler(dev.ricardo.notification.template.MissingTemplateVariableException.class)
     public ProblemDetail handleMissingTemplateVariable(dev.ricardo.notification.template.MissingTemplateVariableException ex) {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage());
