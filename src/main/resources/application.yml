@@ -17,12 +17,17 @@ spring:
   flyway:
     enabled: true
 
-  # Para o Mailpit local não precisa de login nem TLS.
-  # Em produção defina SPRING_MAIL_USERNAME, SPRING_MAIL_PASSWORD e as
-  # propriedades de TLS por variáveis de ambiente.
   mail:
-    host: ${MAIL_HOST:localhost}
-    port: ${MAIL_PORT:1025}
+    host: ${SPRING_MAIL_HOST:${MAIL_HOST:localhost}}
+    port: ${SPRING_MAIL_PORT:${MAIL_PORT:1025}}
+    username: ${SPRING_MAIL_USERNAME:}
+    password: ${SPRING_MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: ${SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH:false}
+          starttls:
+            enable: ${SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE:false}
 
 app:
   mail:
