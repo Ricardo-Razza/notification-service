@@ -44,6 +44,7 @@ public class NotificationConsumer {
     private final RabbitTemplate rabbitTemplate;
     private final TransactionTemplate transactionTemplate;
     private final ObjectMapper objectMapper;
+    private final io.micrometer.core.instrument.MeterRegistry meterRegistry;
 
     @Value("${app.rabbitmq.exchange:notification.exchange}")
     private String exchangeName;
@@ -106,7 +107,10 @@ public class NotificationConsumer {
         }
 
         int attemptNumber = notification.getAttempts() + 1;
+        int cycleAttempt = ((attemptNumber - 1) % maxAttempts) + 1;
         log.info("Processing notification {} attempt {}", notificationId, attemptNumber);
+
+        meterRegistry.counter("notifications.attempts", "channel", notification.getChannel().name()).increment();
 
         // Atualiza status para PROCESSING em transação curta
         transactionTemplate.executeWithoutResult(status -> {
@@ -148,8 +152,11 @@ public class NotificationConsumer {
         }
 
         Instant finishedAt = Instant.now();
+        meterRegistry.timer("notifications.send.duration", "channel", notification.getChannel().name())
+                .record(java.time.Duration.between(startedAt, finishedAt));
 
         if (success) {
+            meterRegistry.counter("notifications.sent", "channel", notification.getChannel().name()).increment();
             final Instant finalFinishedAt = finishedAt;
             transactionTemplate.executeWithoutResult(status -> {
                 NotificationEntity entity = notificationRepository.findById(notificationId)
@@ -175,9 +182,10 @@ public class NotificationConsumer {
             log.info("Notification {} sent successfully on attempt {}", notificationId, attemptNumber);
             channel.basicAck(deliveryTag, false);
         } else {
+            meterRegistry.counter("notifications.failed", "channel", notification.getChannel().name()).increment();
             final String finalErrorMessage = errorMessage;
             final Instant finalFinishedAt = finishedAt;
-            boolean shouldRetry = attemptNumber < maxAttempts;
+            boolean shouldRetry = cycleAttempt < maxAttempts;
 
             transactionTemplate.executeWithoutResult(status -> {
                 NotificationEntity entity = notificationRepository.findById(notificationId)
@@ -204,7 +212,7 @@ public class NotificationConsumer {
             });
 
             if (shouldRetry) {
-                String retryRoutingKey = selectRetryRoutingKey(attemptNumber);
+                String retryRoutingKey = selectRetryRoutingKey(cycleAttempt);
                 log.info("Notification {} scheduled for retry (attempt {}) to routing key {}", notificationId, attemptNumber, retryRoutingKey);
                 rabbitTemplate.convertAndSend(exchangeName, retryRoutingKey, new NotificationMessage(notificationId));
             } else {

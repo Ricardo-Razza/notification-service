@@ -71,4 +71,13 @@ public class NotificationController {
     ) {
         return notificationService.getNotificationById(id, applicationId);
     }
+
+    @PostMapping("/{id}/retry")
+    public ResponseEntity<NotificationResponse> retryNotification(
+            @org.springframework.web.bind.annotation.RequestAttribute(value = ApiKeyAuthFilter.AUTHENTICATED_APPLICATION_ID, required = false) UUID applicationId,
+            @PathVariable("id") UUID id
+    ) {
+        NotificationResponse response = notificationService.retryNotification(id, applicationId);
+        return ResponseEntity.accepted().body(response);
+    }
 }

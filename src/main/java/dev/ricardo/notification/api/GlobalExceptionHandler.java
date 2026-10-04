@@ -9,6 +9,7 @@ import dev.ricardo.notification.domain.InvalidNotificationException;
 import dev.ricardo.notification.domain.InvalidTemplateException;
 import dev.ricardo.notification.domain.NotificationNotFoundException;
 import dev.ricardo.notification.domain.NotificationPublishException;
+import dev.ricardo.notification.domain.NotificationRetryConflictException;
 import dev.ricardo.notification.domain.TemplateNotFoundException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
@@ -49,6 +50,15 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(DuplicateApplicationNameException.class)
     public ProblemDetail handleDuplicateApplicationName(DuplicateApplicationNameException ex) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
+        problem.setTitle("Conflict");
+        problem.setType(URI.create("urn:problem-type:conflict"));
+        problem.setProperty("timestamp", Instant.now());
+        return problem;
+    }
+
+    @ExceptionHandler(NotificationRetryConflictException.class)
+    public ProblemDetail handleNotificationRetryConflict(NotificationRetryConflictException ex) {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
         problem.setTitle("Conflict");
         problem.setType(URI.create("urn:problem-type:conflict"));

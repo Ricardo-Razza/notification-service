@@ -8,6 +8,7 @@ import dev.ricardo.notification.domain.InvalidNotificationException;
 import dev.ricardo.notification.domain.NotificationChannel;
 import dev.ricardo.notification.domain.NotificationNotFoundException;
 import dev.ricardo.notification.domain.NotificationPublishException;
+import dev.ricardo.notification.domain.NotificationRetryConflictException;
 import dev.ricardo.notification.domain.NotificationSender;
 import dev.ricardo.notification.domain.NotificationStatus;
 import dev.ricardo.notification.domain.RenderedMessage;
@@ -172,6 +173,49 @@ public class NotificationService {
                 .map(NotificationAttemptResponse::from)
                 .toList();
         return NotificationResponse.from(entity, attemptResponses);
+    }
+
+    public NotificationResponse retryNotification(UUID id, UUID applicationId) {
+        NotificationEntity notification = notificationRepository.findById(id)
+                .orElseThrow(() -> new NotificationNotFoundException(id));
+
+        if (applicationId != null && !applicationId.equals(notification.getApplicationId())) {
+            throw new NotificationNotFoundException(id);
+        }
+
+        if (notification.getStatus() != NotificationStatus.FAILED) {
+            throw new NotificationRetryConflictException(
+                    String.format("Notification %s cannot be retried because it is in status %s (only FAILED notifications can be retried)", id, notification.getStatus())
+            );
+        }
+
+        NotificationEntity queuedEntity = transactionTemplate.execute(status -> {
+            NotificationEntity entity = notificationRepository.findById(id)
+                    .orElseThrow(() -> new NotificationNotFoundException(id));
+            entity.setStatus(NotificationStatus.QUEUED);
+            return notificationRepository.save(entity);
+        });
+
+        try {
+            notificationPublisher.publish(id);
+        } catch (Exception ex) {
+            log.error("Failed to republish notification {} to messaging queue.", id, ex);
+            transactionTemplate.executeWithoutResult(status -> {
+                notificationRepository.findById(id).ifPresent(entity -> {
+                    entity.setStatus(NotificationStatus.FAILED);
+                    notificationRepository.save(entity);
+                });
+            });
+            throw (ex instanceof NotificationPublishException npe)
+                    ? npe
+                    : new NotificationPublishException("Failed to republish notification to queue", ex);
+        }
+
+        var attempts = attemptRepository.findByNotificationIdOrderByAttemptNumberAsc(id);
+        var attemptResponses = attempts.stream()
+                .map(NotificationAttemptResponse::from)
+                .toList();
+        return NotificationResponse.from(queuedEntity, attemptResponses);
     }
 
     @Transactional(readOnly = true)
