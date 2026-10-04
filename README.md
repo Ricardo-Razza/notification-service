@@ -274,6 +274,39 @@ curl -X POST http://localhost:8080/api/v1/notifications/{id}/retry \
 
 ---
 
+## Agendamento e Scheduler de Notificações
+
+O serviço suporta o agendamento de notificações para liberação futura e cancelamento sob demanda:
+
+### 1. Envio Agendado (`POST /api/v1/notifications`)
+- Envie o campo `scheduledAt` no formato ISO-8601 com offset (ex.: `"2026-10-05T10:00:00-03:00"`).
+- O horário deve ser estritamente no futuro e dentro do limite configurável `app.scheduling.max-future-days` (padrão: 365 dias).
+- A notificação é salva com status `SCHEDULED` em UTC e **não é publicada na fila imediatamente**. A resposta retorna `202 Accepted` exibindo o `scheduledAt`.
+
+### 2. Cancelamento (`DELETE /api/v1/notifications/{id}`)
+- Permite cancelar uma notificação agendada que ainda não foi liberada.
+- Notificações com status `SCHEDULED` passam para `CANCELED` (`204 No Content`).
+- Tentativas de cancelar notificações em outros status retornam `409 Conflict`.
+- Notificações pertencentes a outro tenant retornam `404 Not Found`.
+
+### 3. Mecanismo do Scheduler e Concorrência Segura
+- O `@Scheduled` executa periodicamente a cada `app.scheduler.interval-ms` (padrão: 5000 ms).
+- **Transação Curta e `SKIP LOCKED`:** Busca registros com `status = 'SCHEDULED' AND scheduled_at <= :now ORDER BY scheduled_at ASC LIMIT :batchSize FOR UPDATE SKIP LOCKED`. Com isso, múltiplas instâncias da aplicação podem rodar em paralelo sem que duas instâncias processem a mesma notificação nem ocorram deadlocks.
+- **Política de Atraso (`max-lateness`):** Se a notificação venceu há mais tempo que `app.scheduler.max-lateness-seconds` (padrão: 3600 segundos / 1h), ela não é enviada atrasada; seu status é marcado como `FAILED` e `last_error` registra detalhadamente que o limite de tolerância expirou.
+
+### 4. Decisão Arquitetural: Falha na Publicação Pós-Commit
+> [!NOTE]
+> Em estrita conformidade com a arquitetura do projeto, **nenhuma operação de I/O de rede ou broker ocorre dentro de transações de banco de dados**.
+> Portanto:
+> 1. O scheduler bloqueia as notificações elegíveis via `SKIP LOCKED`, atualiza o status de `SCHEDULED` para `QUEUED` e comita a transação no banco.
+> 2. Logo em seguida, fora da transação, publica cada notificação no RabbitMQ.
+> 3. **Se a publicação no broker falhar** (ex.: falha transitória de rede ou RabbitMQ indisponível no momento):
+>    - A falha é registrada em log em nível `ERROR`.
+>    - A notificação permanece no banco de dados com status `QUEUED`.
+>    - **Decisão:** Manter a notificação como `QUEUED` a deixa em estado totalmente seguro e recuperável. O status indica que a notificação foi aprovada pelo agendamento e aguarda consumo, permitindo que a rotina de reconciliação ou intervenção operacional reenvie a mensagem sem risco de perda de dados.
+
+---
+
 ## Observabilidade e Métricas (Micrometer & Actuator)
 
 ### Endpoints Disponíveis

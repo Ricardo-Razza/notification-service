@@ -47,6 +47,13 @@ app:
     max-attempts: ${NOTIFICATION_MAX_ATTEMPTS:3}
   mail:
     from: ${MAIL_FROM:no-reply@notification.local}
+  scheduling:
+    max-future-days: ${SCHEDULING_MAX_FUTURE_DAYS:365}
+  scheduler:
+    enabled: ${SCHEDULER_ENABLED:true}
+    interval-ms: ${SCHEDULER_INTERVAL_MS:5000}
+    batch-size: ${SCHEDULER_BATCH_SIZE:100}
+    max-lateness-seconds: ${SCHEDULER_MAX_LATENESS_SECONDS:3600}
   rabbitmq:
     exchange: ${RABBITMQ_EXCHANGE:notification.exchange}
     queue: ${RABBITMQ_QUEUE:notification.queue}
