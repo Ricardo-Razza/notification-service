@@ -6,4 +6,8 @@ public class TemplateNotFoundException extends RuntimeException {
     public TemplateNotFoundException(UUID id) {
         super("Template not found with id: " + id);
     }
+
+    public TemplateNotFoundException(String message) {
+        super(message);
+    }
 }

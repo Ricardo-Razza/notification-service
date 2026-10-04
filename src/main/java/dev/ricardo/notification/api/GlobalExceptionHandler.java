@@ -1,7 +1,9 @@
 package dev.ricardo.notification.api;
 
 import dev.ricardo.notification.domain.DuplicateTemplateException;
+import dev.ricardo.notification.domain.InvalidNotificationException;
 import dev.ricardo.notification.domain.InvalidTemplateException;
+import dev.ricardo.notification.domain.NotificationNotFoundException;
 import dev.ricardo.notification.domain.TemplateNotFoundException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
@@ -33,6 +35,42 @@ public class GlobalExceptionHandler {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
         problem.setTitle("Conflict");
         problem.setType(URI.create("urn:problem-type:conflict"));
+        problem.setProperty("timestamp", Instant.now());
+        return problem;
+    }
+
+    @ExceptionHandler(NotificationNotFoundException.class)
+    public ProblemDetail handleNotificationNotFound(NotificationNotFoundException ex) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, ex.getMessage());
+        problem.setTitle("Resource Not Found");
+        problem.setType(URI.create("urn:problem-type:not-found"));
+        problem.setProperty("timestamp", Instant.now());
+        return problem;
+    }
+
+    @ExceptionHandler(InvalidNotificationException.class)
+    public ProblemDetail handleInvalidNotification(InvalidNotificationException ex) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, ex.getMessage());
+        problem.setTitle("Invalid Request");
+        problem.setType(URI.create("urn:problem-type:bad-request"));
+        problem.setProperty("timestamp", Instant.now());
+        return problem;
+    }
+
+    @ExceptionHandler(dev.ricardo.notification.template.MissingTemplateVariableException.class)
+    public ProblemDetail handleMissingTemplateVariable(dev.ricardo.notification.template.MissingTemplateVariableException ex) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage());
+        problem.setTitle("Missing Template Variable");
+        problem.setType(URI.create("urn:problem-type:missing-variable"));
+        problem.setProperty("timestamp", Instant.now());
+        return problem;
+    }
+
+    @ExceptionHandler(dev.ricardo.notification.domain.UnsupportedChannelException.class)
+    public ProblemDetail handleUnsupportedChannel(dev.ricardo.notification.domain.UnsupportedChannelException ex) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage());
+        problem.setTitle("Unsupported Channel");
+        problem.setType(URI.create("urn:problem-type:unsupported-channel"));
         problem.setProperty("timestamp", Instant.now());
         return problem;
     }
