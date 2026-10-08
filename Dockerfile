@@ -1,5 +1,5 @@
 # Etapa 1: Build da aplicação com Maven
-FROM eclipse-temurin:21-jdk-jammy AS build
+FROM eclipse-temurin:25-jdk-jammy AS build
 WORKDIR /app
 
 # Copia arquivos de dependência para aproveitar o cache de camadas do Docker
@@ -13,7 +13,7 @@ COPY src ./src
 RUN ./mvnw clean package -DskipTests -B
 
 # Etapa 2: Imagem final de execução com JRE enxuto
-FROM eclipse-temurin:21-jre-jammy
+FROM eclipse-temurin:25-jre-jammy
 WORKDIR /app
 
 # Instalação do curl para verificação de healthcheck do container
