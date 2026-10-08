@@ -13,6 +13,25 @@ Banco: **MySQL 8.4**, `utf8mb4`, datas em **UTC** (`DATETIME(6)`), UUID em `CHAR
 
 Único: `(code, channel)`.
 
+### Isolamento de templates (V6)
+
+`notification_template.application_id CHAR(36) NULL` referencia `application`.
+Nulo indica template global. Os registros existentes, incluindo WELCOME, permanecem globais.
+O índice antigo é substituído por `(scope_key, code, channel)`, onde `scope_key VARCHAR(36)`
+é gerado com `COALESCE(application_id, 'GLOBAL')`. Assim o MySQL impede duplicatas globais.
+Sistemas leem os templates próprios e globais; somente os próprios podem ser alterados.
+No envio, o template próprio tem precedência sobre o global.
+
+### Controles operacionais (V7)
+
+- application: rate_limit_per_minute INT NULL (padrão global), api_key_hash_previous CHAR(64) NULL
+  (único), previous_key_expires_at DATETIME(6) NULL.
+- notification: request_hash CHAR(64) NULL (pedidos antigos não são comparados), recovery_count INT
+  NOT NULL DEFAULT 0, anonymized_at DATETIME(6) NULL, request_id VARCHAR(64) NULL.
+- Índices notification: (status, updated_at) para recuperação e (application_id, created_at) para histórico/estatísticas.
+As colunas recovery_count e anonymized_at tornam recuperação limitada e anonimização idempotente;
+request_id preserva a correlação após reinícios. V1–V5 permanecem imutáveis.
+
 ### notification (V1, com colunas ligadas nas versões seguintes)
 
 | Coluna | Tipo | Regras |
@@ -34,7 +53,7 @@ Banco: **MySQL 8.4**, `utf8mb4`, datas em **UTC** (`DATETIME(6)`), UUID em `CHAR
 
 Único: `(application_id, idempotency_key)`. Índices: `(status, scheduled_at)` e `(created_at)`.
 
-### application (V2)
+### application (V3)
 
 | Coluna | Tipo | Regras |
 |---|---|---|
@@ -44,7 +63,7 @@ Banco: **MySQL 8.4**, `utf8mb4`, datas em **UTC** (`DATETIME(6)`), UUID em `CHAR
 | active | BOOLEAN | padrão true |
 | created_at, updated_at | DATETIME(6) | |
 
-### notification_attempt (V3)
+### notification_attempt (V4)
 
 | Coluna | Tipo | Regras |
 |---|---|---|
@@ -57,7 +76,7 @@ Banco: **MySQL 8.4**, `utf8mb4`, datas em **UTC** (`DATETIME(6)`), UUID em `CHAR
 
 Único: `(notification_id, attempt_number)`.
 
-### notification_schedule (V4)
+### notification_schedule (V5)
 
 | Coluna | Tipo | Regras |
 |---|---|---|
@@ -74,9 +93,15 @@ Banco: **MySQL 8.4**, `utf8mb4`, datas em **UTC** (`DATETIME(6)`), UUID em `CHAR
 | created_at, updated_at | DATETIME(6) | |
 
 Único: `(application_id, name)`. Índice: `(active, next_run_at)`.
-Na V4 também: `notification.schedule_id` com FK para `notification_schedule`, `ON DELETE SET NULL`.
+Na V5 também: `notification.schedule_id` com FK para `notification_schedule`, `ON DELETE SET NULL`.
 
 ### Relações
+
+V8 cria admin_user (e-mail único, hash BCrypt, papel ADMIN/VIEWER, ativo, tentativas de login,
+locked_until, last_login_at e datas) e admin_audit_log (usuário opcional, ação, alvo, JSON de detalhes,
+IP e created_at). O usuário opcional permite auditar login desconhecido sem guardar o e-mail informado.
+Há índices de auditoria por data/usuário; a aplicação só acrescenta registros.
+V9 acrescenta notification.origin: APPLICATION, SCHEDULE ou PANEL; registros anteriores usam APPLICATION.
 
 - `application` 1:N `notification`
 - `application` 1:N `notification_schedule`

@@ -33,6 +33,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @WebMvcTest(TemplateController.class)
 class TemplateControllerTest {
 
+    private static final UUID APPLICATION_ID = UUID.randomUUID();
+
     @Autowired
     private MockMvc mockMvc;
 
@@ -63,9 +65,10 @@ class TemplateControllerTest {
                 Instant.now()
         );
 
-        when(templateService.createTemplate(any(CreateTemplateRequest.class))).thenReturn(response);
+        when(templateService.createTemplate(any(CreateTemplateRequest.class), eq(APPLICATION_ID))).thenReturn(response);
 
         mockMvc.perform(post("/api/v1/templates")
+                        .requestAttr(ApiKeyAuthFilter.AUTHENTICATED_APPLICATION_ID, APPLICATION_ID)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isCreated())
@@ -86,6 +89,7 @@ class TemplateControllerTest {
         );
 
         mockMvc.perform(post("/api/v1/templates")
+                        .requestAttr(ApiKeyAuthFilter.AUTHENTICATED_APPLICATION_ID, APPLICATION_ID)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(invalidRequest)))
                 .andExpect(status().isBadRequest())
@@ -104,10 +108,11 @@ class TemplateControllerTest {
                 "Content"
         );
 
-        when(templateService.createTemplate(any(CreateTemplateRequest.class)))
+        when(templateService.createTemplate(any(CreateTemplateRequest.class), eq(APPLICATION_ID)))
                 .thenThrow(new DuplicateTemplateException("EXISTING_CODE", NotificationChannel.SMS));
 
         mockMvc.perform(post("/api/v1/templates")
+                        .requestAttr(ApiKeyAuthFilter.AUTHENTICATED_APPLICATION_ID, APPLICATION_ID)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isConflict())
@@ -129,9 +134,10 @@ class TemplateControllerTest {
                 Instant.now()
         );
 
-        when(templateService.listTemplates(NotificationChannel.PUSH)).thenReturn(List.of(template));
+        when(templateService.listTemplates(NotificationChannel.PUSH, APPLICATION_ID)).thenReturn(List.of(template));
 
-        mockMvc.perform(get("/api/v1/templates").param("channel", "PUSH"))
+        mockMvc.perform(get("/api/v1/templates").param("channel", "PUSH")
+                        .requestAttr(ApiKeyAuthFilter.AUTHENTICATED_APPLICATION_ID, APPLICATION_ID))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$", hasSize(1)))
                 .andExpect(jsonPath("$[0].code", is("PUSH_PROMO")))
@@ -152,9 +158,10 @@ class TemplateControllerTest {
                 Instant.now()
         );
 
-        when(templateService.getTemplateById(id)).thenReturn(template);
+        when(templateService.getTemplateById(id, APPLICATION_ID)).thenReturn(template);
 
-        mockMvc.perform(get("/api/v1/templates/{id}", id))
+        mockMvc.perform(get("/api/v1/templates/{id}", id)
+                        .requestAttr(ApiKeyAuthFilter.AUTHENTICATED_APPLICATION_ID, APPLICATION_ID))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id", is(id.toString())))
                 .andExpect(jsonPath("$.code", is("WELCOME")));
@@ -164,9 +171,10 @@ class TemplateControllerTest {
     @DisplayName("GET /api/v1/templates/{id} deve retornar 404 Not Found em formato ProblemDetail")
     void shouldReturnNotFoundWhenTemplateDoesNotExist() throws Exception {
         UUID id = UUID.randomUUID();
-        when(templateService.getTemplateById(id)).thenThrow(new TemplateNotFoundException(id));
+        when(templateService.getTemplateById(id, APPLICATION_ID)).thenThrow(new TemplateNotFoundException(id));
 
-        mockMvc.perform(get("/api/v1/templates/{id}", id))
+        mockMvc.perform(get("/api/v1/templates/{id}", id)
+                        .requestAttr(ApiKeyAuthFilter.AUTHENTICATED_APPLICATION_ID, APPLICATION_ID))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.type", is("urn:problem-type:not-found")))
                 .andExpect(jsonPath("$.title", is("Resource Not Found")))
@@ -189,10 +197,11 @@ class TemplateControllerTest {
                 Instant.now()
         );
 
-        when(templateService.updateTemplate(eq(id), any(UpdateTemplateRequest.class)))
+        when(templateService.updateTemplate(eq(id), any(UpdateTemplateRequest.class), eq(APPLICATION_ID)))
                 .thenReturn(updatedResponse);
 
         mockMvc.perform(put("/api/v1/templates/{id}", id)
+                        .requestAttr(ApiKeyAuthFilter.AUTHENTICATED_APPLICATION_ID, APPLICATION_ID)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(updateRequest)))
                 .andExpect(status().isOk())

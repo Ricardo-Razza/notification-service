@@ -24,6 +24,8 @@ import java.util.List;
 import java.util.UUID;
 
 @RestController
+@io.swagger.v3.oas.annotations.tags.Tag(name="System administration")
+@io.swagger.v3.oas.annotations.security.SecurityRequirement(name="AdminTokenAuth")
 @RequestMapping("/api/v1/admin/applications")
 public class ApplicationAdminController {
 
@@ -39,6 +41,7 @@ public class ApplicationAdminController {
     }
 
     @PostMapping
+    @io.swagger.v3.oas.annotations.Operation(summary="Create an application and show its API key once")
     public ResponseEntity<ApplicationCreatedResponse> createApplication(
             @RequestHeader(value = "X-Admin-Token", required = false) String token,
             @Valid @RequestBody CreateApplicationRequest request
@@ -85,6 +88,16 @@ public class ApplicationAdminController {
         if (token == null || !constantTimeEquals(token, adminToken)) {
             throw new InvalidAdminTokenException("Invalid or missing X-Admin-Token");
         }
+    }
+
+    @PostMapping("/{id}/rotate-key")
+    public ApplicationCreatedResponse rotateKey(@RequestHeader(value="X-Admin-Token", required=false) String token, @PathVariable("id") UUID id) {
+        authenticateAdmin(token); return applicationService.rotateKey(id);
+    }
+
+    @PostMapping("/{id}/revoke-previous-key")
+    public ApplicationResponse revokePreviousKey(@RequestHeader(value="X-Admin-Token", required=false) String token, @PathVariable("id") UUID id) {
+        authenticateAdmin(token); return applicationService.revokePreviousKey(id);
     }
 
     private boolean constantTimeEquals(String a, String b) {

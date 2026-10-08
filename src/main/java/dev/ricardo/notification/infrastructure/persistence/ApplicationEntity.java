@@ -37,6 +37,15 @@ public class ApplicationEntity {
     @Column(name = "api_key_hash", length = 64, nullable = false, unique = true)
     private String apiKeyHash;
 
+    @Column(name = "api_key_hash_previous", length = 64)
+    private String apiKeyHashPrevious;
+
+    @Column(name = "previous_key_expires_at")
+    private Instant previousKeyExpiresAt;
+
+    @Column(name = "rate_limit_per_minute")
+    private Integer rateLimitPerMinute;
+
     @Column(name = "active", nullable = false)
     @Builder.Default
     private boolean active = true;

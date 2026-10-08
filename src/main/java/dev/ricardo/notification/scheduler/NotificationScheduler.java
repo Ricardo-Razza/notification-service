@@ -140,11 +140,14 @@ public class NotificationScheduler {
 
                 // 3. Identifica ocorrências devidas até o instante atual
                 List<Instant> dueOccurrences = new ArrayList<>();
+                int occurrenceCount=0;
                 Instant occurrence = schedule.getNextRunAt();
                 while (occurrence != null && !occurrence.isAfter(now)) {
                     if (schedule.getEndAt() != null && occurrence.isAfter(schedule.getEndAt())) {
                         break;
                     }
+                    occurrenceCount++;
+                    if(missedOccurrencePolicy==MissedOccurrencePolicy.SKIP_AND_GENERATE_LATEST)dueOccurrences.clear();
                     dueOccurrences.add(occurrence);
                     occurrence = scheduleTimeCalculator.calculateNextRun(schedule.getCron(), schedule.getTimezone(), occurrence);
                 }
@@ -157,8 +160,8 @@ public class NotificationScheduler {
                 }
 
                 // 4. Política de ocorrências perdidas
-                if (dueOccurrences.size() > 1 && missedOccurrencePolicy == MissedOccurrencePolicy.SKIP_AND_GENERATE_LATEST) {
-                    int skipped = dueOccurrences.size() - 1;
+                if (occurrenceCount > 1 && missedOccurrencePolicy == MissedOccurrencePolicy.SKIP_AND_GENERATE_LATEST) {
+                    int skipped = occurrenceCount - 1;
                     Instant latest = dueOccurrences.get(dueOccurrences.size() - 1);
                     log.warn("Missed {} occurrences for schedule {} ('{}'). Skipping and generating only the latest occurrence at {}",
                             skipped, schedule.getId(), schedule.getName(), latest);
@@ -191,6 +194,7 @@ public class NotificationScheduler {
                     NotificationEntity notification = NotificationEntity.builder()
                             .applicationId(schedule.getApplicationId())
                             .scheduleId(schedule.getId())
+                            .origin("SCHEDULE")
                             .channel(schedule.getChannel())
                             .recipient(schedule.getRecipient())
                             .templateCode(schedule.getTemplateCode())

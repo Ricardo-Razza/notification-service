@@ -1,5 +1,57 @@
 # Notification Service
 
+[![CI](https://github.com/Ricardo-Razza/notification-service/actions/workflows/ci.yml/badge.svg)](https://github.com/Ricardo-Razza/notification-service/actions/workflows/ci.yml)
+
+Operação: [runbook](docs/runbook.md), [implantação](docs/deploy.md), [esquema](docs/banco.md).
+
+## Configuração e atualização das filas
+
+Use apenas `SPRING_MAIL_HOST`, `SPRING_MAIL_PORT`, `SPRING_RABBITMQ_HOST`,
+`SPRING_RABBITMQ_PORT`, `SPRING_RABBITMQ_USERNAME`, `SPRING_RABBITMQ_PASSWORD` e `ADMIN_TOKEN`.
+Os aliases antigos `MAIL_HOST`, `MAIL_PORT`, `RABBITMQ_USER` e `APP_ADMIN_TOKEN` foram removidos.
+`.env` é usado pelo Compose; para rodar o Java fora do Docker, exporte as variáveis no terminal.
+`SMTP_CONNECTION_TIMEOUT_MS`, `SMTP_READ_TIMEOUT_MS`, `SMTP_WRITE_TIMEOUT_MS` controlam
+os timeouts (5000/10000/10000 ms). `RABBITMQ_PREFETCH` tem padrão 5; shutdown aguarda até 30s.
+O healthcheck não expõe detalhes; `/actuator/metrics` exige `X-Admin-Token`.
+Sem `ADMIN_TOKEN`, `/api/v1/admin/**` fica desabilitado com 404.
+
+As filas de retry são `notification.retry-1`, `notification.retry-2`, `notification.retry-3`.
+Mudar `RABBITMQ_RETRY_1_TTL`, `RABBITMQ_RETRY_2_TTL` ou `RABBITMQ_RETRY_3_TTL` não altera uma
+fila já existente: RabbitMQ retorna `PRECONDITION_FAILED` ao redeclarar argumentos diferentes.
+Pare produtores, aguarde o esvaziamento das filas antigas e pare consumidores. Confirme a contagem
+zero no management antes de excluir **somente** as filas de retry afetadas; reinicie o serviço
+para recriá-las. Não exclua a fila principal, DLQ ou volumes. Na troca dos nomes antigos,
+primeiro deixe `notification.retry.10s`, `notification.retry.30s`, `notification.retry.2m`
+esvaziarem. Se não puder aguardar, mova as mensagens com Shovel para a fila principal antes
+de remover as filas antigas. Faça isso em janela de manutenção e confirme o histórico depois.
+
+Progresso do roteiro: [docs/execucao-parte-2.md](docs/execucao-parte-2.md).
+
+## Limites, recuperação e retenção
+
+As variáveis com seus padrões estão em .env.example e .env.prod.example. A janela de rate limit é
+em memória, por aplicação e minuto UTC; uma instância é suportada. Para múltiplas instâncias,
+use armazenamento compartilhado para o limite. O batch recebe `{ "items": [...] }`, até 100 itens,
+com os campos do envio individual e idempotencyKey opcional por item. Retorna 200 com um resultado
+created/replayed/failed por item. Toda a quantidade é reservada antes do batch; limite excedido retorna 429
+com Retry-After, sem criar itens. Reusar uma chave com conteúdo diferente retorna 422.
+
+O reconciliador recupera PENDING/QUEUED/PROCESSING antigos após commit; os limites de idade devem ser
+maiores que os timeouts SMTP e a soma dos TTLs de retry. Consulte runbook.md para simular cada caso.
+Em queda após SMTP aceitar mas antes de gravar SENT, pode haver duplicidade de entrega; o claim atômico
+protege workers concorrentes, mas não fornece exatamente uma entrega entre SMTP e MySQL.
+
+Dados de notificações finais (SENT, FAILED, CANCELED) são anonimizados 30 dias após criação:
+variáveis removidas, destinatário mascarado. Status, canal, datas e motivos sanitizados permanecem.
+Aos 90 dias após criação, são excluídas com as tentativas em cascata. Estados em andamento não são apagados.
+RETENTION_ANONYMIZE_DAYS=0 ou RETENTION_DELETE_DAYS=0 desliga a etapa correspondente.
+Backups têm política de retenção própria; configure também a expiração no bucket externo.
+
+Logs locais usam texto; LOG_FORMAT=logstash habilita JSON em produção. X-Request-Id válido é propagado
+na resposta e na mensagem de fila; IDs inadequados são substituídos por UUID. Não há persistência de
+credenciais no Swagger. springdoc 3.0.3 foi mantido na linha 3.0.x exigida pelo roteiro;
+[a documentação oficial](https://springdoc.org/) confirma o suporte da linha 3.x ao Spring Boot 4.
+
 Serviço centralizado e desacoplado para disparo e gestão de notificações transacionais por múltiplos canais (E-mail, SMS, Push, WhatsApp).
 
 Desenvolvido com **Java 21**, **Spring Boot 4**, **MySQL 8.4** e conformidade com o padrão de erros **RFC 9457 (ProblemDetail)**.
@@ -72,6 +124,9 @@ No ambiente local, o banco de dados MySQL, o RabbitMQ e o emulador de e-mails **
 
 4. **Acessar a caixa postal de testes:**
    Abra no navegador: `http://localhost:8025`
+
+5. **Acessar o Swagger UI (Documentação & Teste Interativo):**
+   Abra no navegador: `http://localhost:8080/swagger-ui/index.html`
 
 ---
 
@@ -384,3 +439,23 @@ curl -X GET http://localhost:8080/actuator/metrics/notifications.sent \
 - `POST /api/v1/schedules/{id}/pause` - Pausa agendamento recorrente
 - `POST /api/v1/schedules/{id}/resume` - Retoma agendamento recorrente recalculando próximo disparo
 
+
+## Painel administrativo — Parte 2
+
+O repositório irmão notification-console consome somente /api/admin/**, com sessão HttpOnly e CSRF.
+Configure ADMIN_EMAIL/ADMIN_PASSWORD no primeiro bootstrap e remova a senha depois da criação.
+ADMIN_COOKIE_SECURE=true é obrigatório atrás do HTTPS em produção. ADMIN_TOKEN continua separado,
+para /api/v1/admin/** e métricas; o painel não usa esse token nem chaves de aplicação.
+
+O Compose de produção inclui console e proxy. Para validar a integração local com Mailpit:
+
+```sh
+docker build -t notification-service:part2 .
+docker build -t notification-console:part2 ../notification-console
+docker compose -f docker-compose.smoke.yml up -d --wait
+```
+
+Painel de testes: http://127.0.0.1:14201; Mailpit: http://127.0.0.1:18025.
+As credenciais dessa stack são fictícias e exclusivas dos testes locais.
+Consulte [execução e validação](docs/execucao-parte-2.md), [auditoria](docs/estado-do-projeto.md),
+[operação](docs/runbook.md) e [implantação](docs/deploy.md).

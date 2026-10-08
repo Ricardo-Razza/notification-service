@@ -34,4 +34,7 @@ build/
 
 # Environment variables
 .env
-
+.env.prod
+.env.smtp
+*-run.log
+backups/

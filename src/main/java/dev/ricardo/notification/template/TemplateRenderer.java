@@ -18,6 +18,8 @@ public class TemplateRenderer {
         while (matcher.find()) {
             String name = matcher.group(1);
             String value = variables.get(name);
+            if(value==null&&"today".equals(name))value=java.time.LocalDate.now(java.time.ZoneOffset.UTC).toString();
+            if(value==null&&"now".equals(name))value=java.time.Instant.now().toString();
             if (value == null) {
                 throw new MissingTemplateVariableException(name);
             }

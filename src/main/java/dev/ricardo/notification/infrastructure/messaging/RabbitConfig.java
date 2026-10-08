@@ -16,6 +16,11 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class RabbitConfig {
 
+    @Bean
+    public org.springframework.amqp.core.AmqpAdmin amqpAdmin(ConnectionFactory factory) {
+        return new org.springframework.amqp.rabbit.core.RabbitAdmin(factory);
+    }
+
     @Value("${app.rabbitmq.exchange:notification.exchange}")
     private String exchangeName;
 
@@ -34,13 +39,13 @@ public class RabbitConfig {
     @Value("${app.rabbitmq.retry-3-ttl:120000}")
     private int retry3Ttl;
 
-    @Value("${app.rabbitmq.retry-1-routing-key:notification.retry.10s}")
+    @Value("${app.rabbitmq.retry-1-routing-key:notification.retry-1}")
     private String retry1RoutingKey;
 
-    @Value("${app.rabbitmq.retry-2-routing-key:notification.retry.30s}")
+    @Value("${app.rabbitmq.retry-2-routing-key:notification.retry-2}")
     private String retry2RoutingKey;
 
-    @Value("${app.rabbitmq.retry-3-routing-key:notification.retry.2m}")
+    @Value("${app.rabbitmq.retry-3-routing-key:notification.retry-3}")
     private String retry3RoutingKey;
 
     @Value("${app.rabbitmq.dlq:notification.dlq}")
@@ -132,8 +137,9 @@ public class RabbitConfig {
     @Bean
     public org.springframework.amqp.rabbit.config.SimpleRabbitListenerContainerFactory rabbitListenerContainerFactory(
             ConnectionFactory connectionFactory,
-            @Value("${app.rabbitmq.concurrency:2}") int concurrency,
-            @Value("${app.rabbitmq.max-concurrency:5}") int maxConcurrency,
+            @Value("${spring.rabbitmq.listener.simple.concurrency:2}") int concurrency,
+            @Value("${spring.rabbitmq.listener.simple.max-concurrency:5}") int maxConcurrency,
+            @Value("${spring.rabbitmq.listener.simple.prefetch:5}") int prefetch,
             @Value("${spring.rabbitmq.listener.simple.auto-startup:true}") boolean autoStartup) {
         org.springframework.amqp.rabbit.config.SimpleRabbitListenerContainerFactory factory =
                 new org.springframework.amqp.rabbit.config.SimpleRabbitListenerContainerFactory();
@@ -141,6 +147,7 @@ public class RabbitConfig {
         factory.setAcknowledgeMode(org.springframework.amqp.core.AcknowledgeMode.MANUAL);
         factory.setConcurrentConsumers(concurrency);
         factory.setMaxConcurrentConsumers(maxConcurrency);
+        factory.setPrefetchCount(prefetch);
         factory.setAutoStartup(autoStartup);
         factory.setMessageConverter(new org.springframework.amqp.support.converter.SimpleMessageConverter());
         return factory;

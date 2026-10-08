@@ -30,6 +30,33 @@ import java.util.Map;
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
+    @ExceptionHandler(dev.ricardo.notification.domain.AdminAuthenticationException.class)
+    public ProblemDetail handleAdminAuthentication(dev.ricardo.notification.domain.AdminAuthenticationException ex) {
+        return ProblemDetail.forStatusAndDetail(org.springframework.http.HttpStatusCode.valueOf(ex.status()),ex.getMessage());
+    }
+
+    @ExceptionHandler({org.springframework.web.servlet.resource.NoResourceFoundException.class,
+            org.springframework.web.servlet.NoHandlerFoundException.class})
+    public ProblemDetail handleMissingRoute(Exception ex) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, "Resource not found");
+    }
+
+    @ExceptionHandler(dev.ricardo.notification.domain.IdempotencyConflictException.class)
+    public ProblemDetail handleIdempotencyConflict(dev.ricardo.notification.domain.IdempotencyConflictException ex) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage());
+    }
+
+    @ExceptionHandler(dev.ricardo.notification.domain.RateLimitException.class)
+    public org.springframework.http.ResponseEntity<ProblemDetail> handleRateLimit(dev.ricardo.notification.domain.RateLimitException ex) {
+        return org.springframework.http.ResponseEntity.status(429).header("Retry-After", Long.toString(ex.retryAfter()))
+                .body(ProblemDetail.forStatusAndDetail(HttpStatus.TOO_MANY_REQUESTS, ex.getMessage()));
+    }
+
+    @ExceptionHandler(dev.ricardo.notification.domain.GlobalTemplateReadOnlyException.class)
+    public ProblemDetail handleGlobalTemplateReadOnly(dev.ricardo.notification.domain.GlobalTemplateReadOnlyException ex) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.FORBIDDEN, ex.getMessage());
+    }
+
     @ExceptionHandler(TemplateNotFoundException.class)
     public ProblemDetail handleTemplateNotFound(TemplateNotFoundException ex) {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, ex.getMessage());
@@ -95,9 +122,9 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(AdminDisabledException.class)
     public ProblemDetail handleAdminDisabled(AdminDisabledException ex) {
-        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE, ex.getMessage());
-        problem.setTitle("Service Unavailable");
-        problem.setType(URI.create("urn:problem-type:service-unavailable"));
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, "Resource not found");
+        problem.setTitle("Resource Not Found");
+        problem.setType(URI.create("urn:problem-type:not-found"));
         problem.setProperty("timestamp", Instant.now());
         return problem;
     }
@@ -232,7 +259,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     public ProblemDetail handleGenericException(Exception ex) {
-        log.error("Unhandled exception caught in GlobalExceptionHandler", ex);
+        log.error("Unhandled exception caught in GlobalExceptionHandler type={}", ex.getClass().getSimpleName());
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.INTERNAL_SERVER_ERROR, "An unexpected error occurred");
         problem.setTitle("Internal Server Error");
         problem.setType(URI.create("urn:problem-type:internal-server-error"));

@@ -34,6 +34,10 @@ public class TemplateEntity {
     @Column(name = "id", length = 36, nullable = false, updatable = false)
     private UUID id;
 
+    @JdbcTypeCode(SqlTypes.CHAR)
+    @Column(name = "application_id", length = 36)
+    private UUID applicationId;
+
     @Column(name = "code", length = 100, nullable = false)
     private String code;
 

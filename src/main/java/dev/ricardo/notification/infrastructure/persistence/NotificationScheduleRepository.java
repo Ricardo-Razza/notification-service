@@ -13,7 +13,8 @@ import java.util.Optional;
 import java.util.UUID;
 
 @Repository
-public interface NotificationScheduleRepository extends JpaRepository<NotificationScheduleEntity, UUID> {
+public interface NotificationScheduleRepository extends JpaRepository<NotificationScheduleEntity, UUID>, org.springframework.data.jpa.repository.JpaSpecificationExecutor<NotificationScheduleEntity> {
+    long countByApplicationId(UUID applicationId);
 
     Optional<NotificationScheduleEntity> findByApplicationIdAndName(UUID applicationId, String name);
 

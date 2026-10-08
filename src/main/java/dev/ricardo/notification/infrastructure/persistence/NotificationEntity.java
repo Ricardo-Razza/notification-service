@@ -78,6 +78,23 @@ public class NotificationEntity {
     @Column(name = "idempotency_key", length = 255)
     private String idempotencyKey;
 
+    @Column(name = "request_hash", length = 64)
+    private String requestHash;
+
+    @Column(name = "recovery_count", nullable = false)
+    @Builder.Default
+    private int recoveryCount = 0;
+
+    @Column(name = "anonymized_at")
+    private Instant anonymizedAt;
+
+    @Column(name = "request_id", length = 64)
+    private String requestId;
+
+    @Builder.Default
+    @Column(name="origin",nullable=false,length=20)
+    private String origin="APPLICATION";
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 

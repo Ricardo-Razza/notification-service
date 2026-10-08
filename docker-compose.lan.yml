@@ -1,0 +1,7 @@
+# Preview on the local network; API and static files share the same origin.
+# Keep databases, SMTP preview and direct backend access on their existing bindings.
+services:
+  proxy:
+    ports: !override
+      - "127.0.0.1:14201:8080"
+      - "${LAN_BIND_IP:?Set LAN_BIND_IP to this computer's LAN address}:14201:8080"

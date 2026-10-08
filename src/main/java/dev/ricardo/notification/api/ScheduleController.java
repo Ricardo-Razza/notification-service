@@ -23,6 +23,7 @@ import java.net.URI;
 import java.util.UUID;
 
 @RestController
+@io.swagger.v3.oas.annotations.tags.Tag(name="Schedules")
 @RequestMapping("/api/v1/schedules")
 @RequiredArgsConstructor
 public class ScheduleController {

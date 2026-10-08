@@ -48,6 +48,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @SpringBootTest
 @AutoConfigureMockMvc
+@org.springframework.test.annotation.DirtiesContext(classMode=org.springframework.test.annotation.DirtiesContext.ClassMode.AFTER_CLASS)
 @Testcontainers
 class NotificationRetryIntegrationTest {
 
@@ -118,9 +119,9 @@ class NotificationRetryIntegrationTest {
 
         rabbitTemplate.execute(channel -> {
             channel.queuePurge("notification.queue");
-            channel.queuePurge("notification.retry.10s");
-            channel.queuePurge("notification.retry.30s");
-            channel.queuePurge("notification.retry.2m");
+            channel.queuePurge("notification.retry-1");
+            channel.queuePurge("notification.retry-2");
+            channel.queuePurge("notification.retry-3");
             channel.queuePurge("notification.dlq");
             return null;
         });
@@ -246,8 +247,7 @@ class NotificationRetryIntegrationTest {
         mockMvc.perform(get("/actuator/health"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("UP"))
-                .andExpect(jsonPath("$.components.db.status").value("UP"))
-                .andExpect(jsonPath("$.components.rabbit.status").value("UP"));
+                .andExpect(jsonPath("$.components").doesNotExist());
     }
 
     @Test

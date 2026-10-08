@@ -1,4 +1,24 @@
 services:
+  proxy:
+    image: caddy:2
+    restart: unless-stopped
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:?APP_DOMAIN is required}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [edge]
+    depends_on: [app, console]
+  console:
+    build:
+      context: ../notification-console
+    image: notification-console:production
+    restart: unless-stopped
+    networks: [edge]
   mysql:
     image: mysql:8.4
     container_name: notification-mysql-prod
@@ -24,10 +44,12 @@ services:
     container_name: notification-rabbitmq-prod
     restart: unless-stopped
     environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-notification}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is required}
+      RABBITMQ_DEFAULT_USER: ${SPRING_RABBITMQ_USERNAME:-notification}
+      RABBITMQ_DEFAULT_PASS: ${SPRING_RABBITMQ_PASSWORD:?SPRING_RABBITMQ_PASSWORD is required}
     volumes:
       - rabbitmq_prod_data:/var/lib/rabbitmq
+    ports:
+      - "127.0.0.1:15672:15672"
     networks:
       - notification-net
     healthcheck:
@@ -48,8 +70,6 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
-    ports:
-      - "${APP_PORT:-8080}:8080"
     environment:
       DB_URL: jdbc:mysql://mysql:3306/${DB_NAME:-notification}?useUnicode=true&characterEncoding=utf8mb4
       DB_USER: ${DB_USER:-notification}
@@ -58,15 +78,72 @@ services:
       SPRING_MAIL_PORT: ${SPRING_MAIL_PORT:-587}
       SPRING_MAIL_USERNAME: ${SPRING_MAIL_USERNAME:-}
       SPRING_MAIL_PASSWORD: ${SPRING_MAIL_PASSWORD:-}
-      SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH: ${SPRING_MAIL_AUTH:-true}
-      SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE: ${SPRING_MAIL_STARTTLS:-true}
+      SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH: ${SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH:-true}
+      SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE: ${SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE:-true}
       MAIL_FROM: ${MAIL_FROM:-no-reply@notification.local}
       SPRING_RABBITMQ_HOST: rabbitmq
       SPRING_RABBITMQ_PORT: 5672
-      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER:-notification}
-      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is required}
+      SPRING_RABBITMQ_USERNAME: ${SPRING_RABBITMQ_USERNAME:-notification}
+      SPRING_RABBITMQ_PASSWORD: ${SPRING_RABBITMQ_PASSWORD:?SPRING_RABBITMQ_PASSWORD is required}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      ADMIN_COOKIE_SECURE: ${ADMIN_COOKIE_SECURE:-true}
+      ADMIN_SESSION_TIMEOUT: ${ADMIN_SESSION_TIMEOUT:-30m}
+      ADMIN_LOCK_MINUTES: ${ADMIN_LOCK_MINUTES:-15}
+      SWAGGER_ENABLED: ${SWAGGER_ENABLED:-false}
+      SMTP_CONNECTION_TIMEOUT_MS: ${SMTP_CONNECTION_TIMEOUT_MS:-5000}
+      SMTP_READ_TIMEOUT_MS: ${SMTP_READ_TIMEOUT_MS:-10000}
+      SMTP_WRITE_TIMEOUT_MS: ${SMTP_WRITE_TIMEOUT_MS:-10000}
+      RABBITMQ_PREFETCH: ${RABBITMQ_PREFETCH:-5}
+      RABBITMQ_CONCURRENCY: ${RABBITMQ_CONCURRENCY:-2}
+      RABBITMQ_MAX_CONCURRENCY: ${RABBITMQ_MAX_CONCURRENCY:-5}
+      RABBITMQ_RETRY_1_TTL: ${RABBITMQ_RETRY_1_TTL:-10000}
+      RABBITMQ_RETRY_2_TTL: ${RABBITMQ_RETRY_2_TTL:-30000}
+      RABBITMQ_RETRY_3_TTL: ${RABBITMQ_RETRY_3_TTL:-120000}
+      LOG_FORMAT: ${LOG_FORMAT:-logstash}
+      SERVER_FORWARD_HEADERS_STRATEGY: framework
+      API_TITLE: "${API_TITLE:-Notification Service API}"
+      API_DESCRIPTION: "${API_DESCRIPTION:-Transactional notification service}"
+      API_VERSION: "${API_VERSION:-1.0.0}"
+      RATE_LIMIT_PER_MINUTE: "${RATE_LIMIT_PER_MINUTE:-100}"
+      MAX_VARIABLES: "${MAX_VARIABLES:-50}"
+      VARIABLE_KEY_LENGTH: "${VARIABLE_KEY_LENGTH:-64}"
+      VARIABLE_VALUE_LENGTH: "${VARIABLE_VALUE_LENGTH:-2000}"
+      REQUEST_BODY_MAX_BYTES: "${REQUEST_BODY_MAX_BYTES:-102400}"
+      TEMPLATE_CONTENT_MAX_LENGTH: "${TEMPLATE_CONTENT_MAX_LENGTH:-50000}"
+      MAX_SCHEDULES_PER_APPLICATION: "${MAX_SCHEDULES_PER_APPLICATION:-100}"
+      MINIMUM_CRON_SECONDS: "${MINIMUM_CRON_SECONDS:-60}"
+      NOTIFICATION_BATCH_SIZE: "${NOTIFICATION_BATCH_SIZE:-100}"
+      API_KEY_GRACE_HOURS: "${API_KEY_GRACE_HOURS:-24}"
+      RETENTION_ENABLED: "${RETENTION_ENABLED:-true}"
+      RETENTION_CRON: "${RETENTION_CRON:-0 0 3 * * *}"
+      RETENTION_DELETE_DAYS: "${RETENTION_DELETE_DAYS:-90}"
+      RETENTION_ANONYMIZE_DAYS: "${RETENTION_ANONYMIZE_DAYS:-30}"
+      RETENTION_BATCH_SIZE: "${RETENTION_BATCH_SIZE:-1000}"
+      RETENTION_PAUSE_MS: "${RETENTION_PAUSE_MS:-200}"
+      NOTIFICATION_MAX_ATTEMPTS: "${NOTIFICATION_MAX_ATTEMPTS:-3}"
+      SCHEDULING_MAX_FUTURE_DAYS: "${SCHEDULING_MAX_FUTURE_DAYS:-365}"
+      SCHEDULER_ENABLED: "${SCHEDULER_ENABLED:-true}"
+      SCHEDULER_INTERVAL_MS: "${SCHEDULER_INTERVAL_MS:-5000}"
+      SCHEDULER_BATCH_SIZE: "${SCHEDULER_BATCH_SIZE:-100}"
+      SCHEDULER_MAX_LATENESS_SECONDS: "${SCHEDULER_MAX_LATENESS_SECONDS:-3600}"
+      SCHEDULER_MISSED_OCCURRENCE_POLICY: "${SCHEDULER_MISSED_OCCURRENCE_POLICY:-SKIP_AND_GENERATE_LATEST}"
+      RECONCILER_ENABLED: "${RECONCILER_ENABLED:-true}"
+      RECONCILER_INTERVAL_MS: "${RECONCILER_INTERVAL_MS:-60000}"
+      RECONCILER_PENDING_SECONDS: "${RECONCILER_PENDING_SECONDS:-120}"
+      RECONCILER_QUEUED_SECONDS: "${RECONCILER_QUEUED_SECONDS:-600}"
+      RECONCILER_PROCESSING_SECONDS: "${RECONCILER_PROCESSING_SECONDS:-300}"
+      RECONCILER_BATCH_SIZE: "${RECONCILER_BATCH_SIZE:-100}"
+      RECONCILER_MAX_RECOVERIES: "${RECONCILER_MAX_RECOVERIES:-5}"
+      RABBITMQ_EXCHANGE: "${RABBITMQ_EXCHANGE:-notification.exchange}"
+      RABBITMQ_QUEUE: "${RABBITMQ_QUEUE:-notification.queue}"
+      RABBITMQ_ROUTING_KEY: "${RABBITMQ_ROUTING_KEY:-notification.send}"
+      RABBITMQ_DLQ: "${RABBITMQ_DLQ:-notification.dlq}"
+      RABBITMQ_DLQ_ROUTING_KEY: "${RABBITMQ_DLQ_ROUTING_KEY:-notification.dlq}"
     networks:
       - notification-net
+      - edge
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8080/actuator/health || exit 1"]
       interval: 15s
@@ -77,8 +154,13 @@ services:
 networks:
   notification-net:
     driver: bridge
+    internal: true
+  edge:
+    driver: bridge
 
 volumes:
+  caddy_data:
+  caddy_config:
   mysql_prod_data:
     driver: local
   rabbitmq_prod_data:

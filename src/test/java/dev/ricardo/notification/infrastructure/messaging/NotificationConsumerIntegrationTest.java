@@ -57,6 +57,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @SpringBootTest
 @AutoConfigureMockMvc
+@org.springframework.test.annotation.DirtiesContext(classMode=org.springframework.test.annotation.DirtiesContext.ClassMode.AFTER_CLASS)
 @Testcontainers
 class NotificationConsumerIntegrationTest {
 
@@ -125,9 +126,9 @@ class NotificationConsumerIntegrationTest {
 
         rabbitTemplate.execute(channel -> {
             channel.queuePurge("notification.queue");
-            channel.queuePurge("notification.retry.10s");
-            channel.queuePurge("notification.retry.30s");
-            channel.queuePurge("notification.retry.2m");
+            channel.queuePurge("notification.retry-1");
+            channel.queuePurge("notification.retry-2");
+            channel.queuePurge("notification.retry-3");
             channel.queuePurge("notification.dlq");
             return null;
         });
@@ -185,6 +186,30 @@ class NotificationConsumerIntegrationTest {
         assertThat(attempts.get(0).getFinishedAt()).isNotNull();
     }
 
+    @org.junit.jupiter.api.RepeatedTest(3)
+    void onlyOneWorkerSendsConcurrentDuplicateMessages() throws Exception {
+        var n=notificationRepository.saveAndFlush(NotificationEntity.builder().applicationId(app.getId()).channel(NotificationChannel.EMAIL)
+                .recipient("concurrency@example.com").templateCode("WELCOME").payload(Map.of("name","Concurrent"))
+                .status(NotificationStatus.QUEUED).build());
+        doAnswer(inv -> { Thread.sleep(300); return null; }).when(emailSender).send(any());
+        for(int i=0;i<10;i++) rabbitTemplate.convertAndSend("notification.exchange","notification.send",new NotificationMessage(n.getId()));
+        waitFor(() -> notificationRepository.findById(n.getId()).orElseThrow().getStatus()==NotificationStatus.SENT, Duration.ofSeconds(10));
+        Mockito.verify(emailSender,Mockito.times(1)).send(any());
+        assertThat(attemptRepository.findByNotificationIdOrderByAttemptNumberAsc(n.getId())).hasSize(1);
+    }
+
+    @Test void permanentFailureDoesNotRetryOrLeakMessage() throws Exception {
+        doThrow(new org.springframework.mail.MailParseException("secret body private@example.com")).when(emailSender).send(any());
+        var n=notificationRepository.saveAndFlush(NotificationEntity.builder().applicationId(app.getId()).channel(NotificationChannel.EMAIL)
+                .recipient("permanent@example.com").templateCode("WELCOME").payload(Map.of("name","Permanent"))
+                .status(NotificationStatus.QUEUED).build());
+        rabbitTemplate.convertAndSend("notification.exchange","notification.send",new NotificationMessage(n.getId()));
+        waitFor(() -> notificationRepository.findById(n.getId()).orElseThrow().getStatus()==NotificationStatus.FAILED, Duration.ofSeconds(10));
+        Mockito.verify(emailSender,Mockito.times(1)).send(any());
+        assertThat(notificationRepository.findById(n.getId()).orElseThrow().getLastError()).doesNotContain("secret","private@example.com");
+        assertThat(attemptRepository.findByNotificationIdOrderByAttemptNumberAsc(n.getId())).hasSize(1);
+    }
+
     @Test
     @DisplayName("Falha seguida de sucesso: faz retry pela fila de retry e conclui com status SENT e 2 tentativas")
     void shouldRetryOnFailureAndSucceedOnSecondAttempt() throws Exception {
@@ -224,7 +249,7 @@ class NotificationConsumerIntegrationTest {
         assertThat(attempts).hasSize(2);
         assertThat(attempts.get(0).getAttemptNumber()).isEqualTo(1);
         assertThat(attempts.get(0).getStatus()).isEqualTo(AttemptStatus.FAILURE);
-        assertThat(attempts.get(0).getErrorMessage()).isEqualTo("Simulated SMTP error");
+        assertThat(attempts.get(0).getErrorMessage()).isEqualTo("Temporary delivery failure");
         assertThat(attempts.get(1).getAttemptNumber()).isEqualTo(2);
         assertThat(attempts.get(1).getStatus()).isEqualTo(AttemptStatus.SUCCESS);
     }
@@ -261,7 +286,7 @@ class NotificationConsumerIntegrationTest {
         NotificationEntity entity = notificationRepository.findById(id).orElseThrow();
         assertThat(entity.getStatus()).isEqualTo(NotificationStatus.FAILED);
         assertThat(entity.getAttempts()).isEqualTo(3);
-        assertThat(entity.getLastError()).isEqualTo("Fatal SMTP error");
+        assertThat(entity.getLastError()).isEqualTo("Temporary delivery failure");
 
         List<NotificationAttemptEntity> attempts = attemptRepository.findByNotificationIdOrderByAttemptNumberAsc(id);
         assertThat(attempts).hasSize(3);

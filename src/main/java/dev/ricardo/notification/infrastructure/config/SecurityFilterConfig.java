@@ -14,6 +14,26 @@ import tools.jackson.databind.ObjectMapper;
 public class SecurityFilterConfig {
 
     @Bean
+    public FilterRegistrationBean<dev.ricardo.notification.api.AdminTokenAuthFilter> adminTokenFilter(
+            @Value("${app.admin.token:}") String token, ObjectMapper mapper) {
+        var registration=new FilterRegistrationBean<>(new dev.ricardo.notification.api.AdminTokenAuthFilter(token,mapper));
+        registration.addUrlPatterns("/api/v1/admin/*"); registration.setOrder(1); return registration;
+    }
+
+    @Bean
+    public FilterRegistrationBean<dev.ricardo.notification.api.RequestCorrelationFilter> correlationFilter() {
+        var registration = new FilterRegistrationBean<>(new dev.ricardo.notification.api.RequestCorrelationFilter());
+        registration.setOrder(-100); registration.addUrlPatterns("/*"); return registration;
+    }
+
+    @Bean
+    public FilterRegistrationBean<dev.ricardo.notification.api.RequestBodyLimitFilter> requestBodyLimitFilter(
+            @Value("${app.limits.request-body-bytes:102400}") int maxBytes, ObjectMapper mapper) {
+        var registration = new FilterRegistrationBean<>(new dev.ricardo.notification.api.RequestBodyLimitFilter(maxBytes, mapper));
+        registration.addUrlPatterns("/api/*"); registration.setOrder(0); return registration;
+    }
+
+    @Bean
     public ApiKeyAuthFilter apiKeyAuthFilter(
             ApiKeyService apiKeyService,
             ApplicationRepository applicationRepository,

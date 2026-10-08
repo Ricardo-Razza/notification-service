@@ -20,6 +20,7 @@ import java.util.concurrent.TimeUnit;
 public class RabbitNotificationPublisher implements NotificationPublisher {
 
     private final RabbitTemplate rabbitTemplate;
+    private final dev.ricardo.notification.infrastructure.persistence.NotificationRepository notificationRepository;
 
     @Value("${app.rabbitmq.exchange:notification.exchange}")
     private String exchange;
@@ -29,8 +30,21 @@ public class RabbitNotificationPublisher implements NotificationPublisher {
 
     @Override
     public void publish(UUID notificationId) {
+        var previous=org.slf4j.MDC.getCopyOfContextMap();
+        org.slf4j.MDC.put("notificationId",notificationId.toString());
+        try {
+            notificationRepository.findById(notificationId).ifPresent(n->{
+                if(n.getApplicationId()!=null)org.slf4j.MDC.put("applicationId",n.getApplicationId().toString());
+                if(n.getRequestId()!=null)org.slf4j.MDC.put("requestId",n.getRequestId());
+                org.slf4j.MDC.put("origin",n.getOrigin());
+            });
+            publishMessage(notificationId);
+        }finally{org.slf4j.MDC.clear();if(previous!=null)org.slf4j.MDC.setContextMap(previous);}
+    }
+
+    private void publishMessage(UUID notificationId) {
         log.info("Publishing notification {} to exchange '{}' with routing key '{}'", notificationId, exchange, routingKey);
-        NotificationMessage message = new NotificationMessage(notificationId);
+        NotificationMessage message = new NotificationMessage(notificationId, org.slf4j.MDC.get("requestId"));
         CorrelationData correlationData = new CorrelationData(notificationId.toString());
 
         try {
@@ -45,12 +59,15 @@ public class RabbitNotificationPublisher implements NotificationPublisher {
                 log.error("Failed to publish notification {}: broker NACK or timeout. Reason: {}", notificationId, reason);
                 throw new NotificationPublishException("Broker did not acknowledge notification " + notificationId + ": " + reason);
             }
+            if (correlationData.getReturned() != null) {
+                throw new NotificationPublishException("Notification message was not routed to a queue");
+            }
             log.info("Notification {} confirmed published to RabbitMQ", notificationId);
         } catch (NotificationPublishException ex) {
             throw ex;
         } catch (Exception ex) {
-            log.error("Error publishing notification {} to RabbitMQ: {}", notificationId, ex.getMessage());
-            throw new NotificationPublishException("Failed to publish notification to queue: " + ex.getMessage(), ex);
+            log.error("Error publishing notification {} to RabbitMQ: {}", notificationId, ex.getClass().getSimpleName());
+            throw new NotificationPublishException("Failed to publish notification to queue", ex);
         }
     }
 }

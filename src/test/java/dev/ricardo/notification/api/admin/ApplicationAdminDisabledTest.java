@@ -29,7 +29,7 @@ class ApplicationAdminDisabledTest {
     private ApplicationService applicationService;
 
     @Test
-    @DisplayName("Quando ADMIN_TOKEN não estiver definido, endpoints admin devem responder 503 ProblemDetail")
+    @DisplayName("Quando ADMIN_TOKEN não estiver definido, endpoints admin devem responder 404 ProblemDetail")
     void shouldReturnServiceUnavailableWhenAdminTokenNotConfigured() throws Exception {
         CreateApplicationRequest request = new CreateApplicationRequest("Order Service");
 
@@ -37,9 +37,9 @@ class ApplicationAdminDisabledTest {
                         .header("X-Admin-Token", "any-token")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isServiceUnavailable())
-                .andExpect(jsonPath("$.type", org.hamcrest.Matchers.is("urn:problem-type:service-unavailable")))
-                .andExpect(jsonPath("$.title", org.hamcrest.Matchers.is("Service Unavailable")))
-                .andExpect(jsonPath("$.detail", org.hamcrest.Matchers.containsString("ADMIN_TOKEN is not configured")));
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.type", org.hamcrest.Matchers.is("urn:problem-type:not-found")))
+                .andExpect(jsonPath("$.title", org.hamcrest.Matchers.is("Resource Not Found")))
+                .andExpect(jsonPath("$.detail", org.hamcrest.Matchers.is("Resource not found")));
     }
 }

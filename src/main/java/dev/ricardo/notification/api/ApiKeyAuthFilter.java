@@ -36,7 +36,12 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
         String path = request.getRequestURI();
-        return path.startsWith("/actuator") || path.startsWith("/api/v1/admin");
+        return path.startsWith("/actuator")
+                || path.startsWith("/api/v1/admin")
+                || path.startsWith("/swagger-ui")
+                || path.startsWith("/v3/api-docs")
+                || path.startsWith("/swagger-resources")
+                || path.startsWith("/webjars");
     }
 
     @Override
@@ -61,6 +66,9 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
         }
 
         Optional<ApplicationEntity> appOptional = applicationRepository.findByApiKeyHash(hash);
+        if (appOptional.isEmpty()) {
+            appOptional = applicationRepository.findByApiKeyHashPreviousAndPreviousKeyExpiresAtAfter(hash, Instant.now());
+        }
         if (appOptional.isEmpty() || !appOptional.get().isActive()) {
             writeUnauthorizedResponse(response, "Invalid or missing API key", request.getRequestURI());
             return;
@@ -68,8 +76,9 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
 
         ApplicationEntity app = appOptional.get();
         request.setAttribute(AUTHENTICATED_APPLICATION_ID, app.getId());
-
-        filterChain.doFilter(request, response);
+        try (var ignored = org.slf4j.MDC.putCloseable("applicationId", app.getId().toString())) {
+            filterChain.doFilter(request, response);
+        }
     }
 
     private void writeUnauthorizedResponse(HttpServletResponse response, String detail, String uri) throws IOException {

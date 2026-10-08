@@ -49,13 +49,13 @@ public class NotificationConsumer {
     @Value("${app.rabbitmq.exchange:notification.exchange}")
     private String exchangeName;
 
-    @Value("${app.rabbitmq.retry-1-routing-key:notification.retry.10s}")
+    @Value("${app.rabbitmq.retry-1-routing-key:notification.retry-1}")
     private String retry1RoutingKey;
 
-    @Value("${app.rabbitmq.retry-2-routing-key:notification.retry.30s}")
+    @Value("${app.rabbitmq.retry-2-routing-key:notification.retry-2}")
     private String retry2RoutingKey;
 
-    @Value("${app.rabbitmq.retry-3-routing-key:notification.retry.2m}")
+    @Value("${app.rabbitmq.retry-3-routing-key:notification.retry-3}")
     private String retry3RoutingKey;
 
     @Value("${app.rabbitmq.dlq-routing-key:notification.dlq}")
@@ -74,22 +74,34 @@ public class NotificationConsumer {
                 throw new IllegalArgumentException("Payload missing notificationId");
             }
         } catch (Exception ex) {
-            log.error("Malformed message received: routing directly to DLQ. Tag: {}", deliveryTag, ex);
+            log.error("Malformed message received: routing directly to DLQ. Tag: {}", deliveryTag);
             rabbitTemplate.send(exchangeName, dlqRoutingKey, message);
             channel.basicAck(deliveryTag, false);
             return;
         }
 
         UUID notificationId = notificationMessage.notificationId();
+        var previousContext = org.slf4j.MDC.getCopyOfContextMap();
+        org.slf4j.MDC.put("notificationId", notificationId.toString());
+        if (notificationMessage.requestId() != null) org.slf4j.MDC.put("requestId", notificationMessage.requestId());
         try {
             processNotification(notificationId, channel, deliveryTag);
         } catch (Exception ex) {
-            log.error("Unexpected error processing notification {}. Requeueing message.", notificationId, ex);
+            log.error("Unexpected error processing notification {}. Requeueing message. Type={}", notificationId, ex.getClass().getSimpleName());
             channel.basicNack(deliveryTag, false, true);
+        } finally {
+            org.slf4j.MDC.clear();
+            if (previousContext != null) org.slf4j.MDC.setContextMap(previousContext);
         }
     }
 
     private void processNotification(UUID notificationId, Channel channel, long deliveryTag) throws IOException {
+        Integer claimed = transactionTemplate.execute(status -> notificationRepository.claimQueued(notificationId, Instant.now()));
+        if (claimed == null || claimed != 1) {
+            log.info("Notification {} is not claimable; duplicate or changed state. Discarding message.", notificationId);
+            channel.basicAck(deliveryTag, false);
+            return;
+        }
         Optional<NotificationEntity> optionalEntity = notificationRepository.findById(notificationId);
         if (optionalEntity.isEmpty()) {
             log.warn("Notification {} not found in database. Discarding message.", notificationId);
@@ -98,6 +110,9 @@ public class NotificationConsumer {
         }
 
         NotificationEntity notification = optionalEntity.get();
+        org.slf4j.MDC.put("origin",notification.getOrigin());
+        if (notification.getApplicationId() != null) org.slf4j.MDC.put("applicationId", notification.getApplicationId().toString());
+        if (notification.getRequestId() != null) org.slf4j.MDC.put("requestId", notification.getRequestId());
         if (notification.getStatus() == NotificationStatus.SENT ||
                 notification.getStatus() == NotificationStatus.CANCELED ||
                 notification.getStatus() == NotificationStatus.FAILED) {
@@ -108,25 +123,19 @@ public class NotificationConsumer {
 
         int attemptNumber = notification.getAttempts() + 1;
         int cycleAttempt = ((attemptNumber - 1) % maxAttempts) + 1;
-        log.info("Processing notification {} attempt {}", notificationId, attemptNumber);
+        log.info("Processing notification {} application {} attempt {}", notificationId, notification.getApplicationId(), attemptNumber);
 
         meterRegistry.counter("notifications.attempts", "channel", notification.getChannel().name()).increment();
-
-        // Atualiza status para PROCESSING em transação curta
-        transactionTemplate.executeWithoutResult(status -> {
-            notificationRepository.findById(notificationId).ifPresent(entity -> {
-                entity.setStatus(NotificationStatus.PROCESSING);
-                notificationRepository.save(entity);
-            });
-        });
 
         // Envio fora de transação do banco
         Instant startedAt = Instant.now();
         boolean success = false;
         String errorMessage = null;
+        boolean permanentFailure = false;
 
         try {
-            TemplateEntity template = templateRepository.findByCodeAndChannel(
+            TemplateEntity template = templateRepository.findVisible(
+                    notification.getApplicationId(),
                     notification.getTemplateCode(),
                     notification.getChannel()
             ).orElseThrow(() -> new TemplateNotFoundException(
@@ -147,8 +156,10 @@ public class NotificationConsumer {
             success = true;
         } catch (Exception ex) {
             success = false;
-            errorMessage = (ex.getMessage() != null) ? ex.getMessage() : ex.getClass().getSimpleName();
-            log.warn("Notification {} failed on attempt {}: {}", notificationId, attemptNumber, errorMessage);
+            var failure = new dev.ricardo.notification.infrastructure.email.EmailFailureClassifier().classify(ex);
+            permanentFailure = failure.permanent();
+            errorMessage = failure.reason();
+            log.warn("Notification {} application {} failed on attempt {}: {}", notificationId, notification.getApplicationId(), attemptNumber, errorMessage);
         }
 
         Instant finishedAt = Instant.now();
@@ -159,8 +170,11 @@ public class NotificationConsumer {
             meterRegistry.counter("notifications.sent", "channel", notification.getChannel().name()).increment();
             final Instant finalFinishedAt = finishedAt;
             transactionTemplate.executeWithoutResult(status -> {
-                NotificationEntity entity = notificationRepository.findById(notificationId)
+                NotificationEntity entity = notificationRepository.findLockedById(notificationId)
                         .orElseThrow(() -> new NotificationNotFoundException(notificationId));
+                if (entity.getStatus() != NotificationStatus.PROCESSING || entity.getAttempts() != notification.getAttempts()) {
+                    throw new IllegalStateException("Worker claim expired");
+                }
                 entity.setStatus(NotificationStatus.SENT);
                 entity.setSentAt(finalFinishedAt);
                 entity.setAttempts(attemptNumber);
@@ -185,11 +199,14 @@ public class NotificationConsumer {
             meterRegistry.counter("notifications.failed", "channel", notification.getChannel().name()).increment();
             final String finalErrorMessage = errorMessage;
             final Instant finalFinishedAt = finishedAt;
-            boolean shouldRetry = cycleAttempt < maxAttempts;
+            boolean shouldRetry = !permanentFailure && cycleAttempt < maxAttempts;
 
             transactionTemplate.executeWithoutResult(status -> {
-                NotificationEntity entity = notificationRepository.findById(notificationId)
+                NotificationEntity entity = notificationRepository.findLockedById(notificationId)
                         .orElseThrow(() -> new NotificationNotFoundException(notificationId));
+                if (entity.getStatus() != NotificationStatus.PROCESSING || entity.getAttempts() != notification.getAttempts()) {
+                    throw new IllegalStateException("Worker claim expired");
+                }
                 entity.setAttempts(attemptNumber);
                 entity.setLastError(finalErrorMessage);
                 if (shouldRetry) {
@@ -214,10 +231,10 @@ public class NotificationConsumer {
             if (shouldRetry) {
                 String retryRoutingKey = selectRetryRoutingKey(cycleAttempt);
                 log.info("Notification {} scheduled for retry (attempt {}) to routing key {}", notificationId, attemptNumber, retryRoutingKey);
-                rabbitTemplate.convertAndSend(exchangeName, retryRoutingKey, new NotificationMessage(notificationId));
+                rabbitTemplate.convertAndSend(exchangeName, retryRoutingKey, new NotificationMessage(notificationId, notification.getRequestId()));
             } else {
                 log.error("Notification {} exhausted all {} attempts, moving to DLQ", notificationId, maxAttempts);
-                rabbitTemplate.convertAndSend(exchangeName, dlqRoutingKey, new NotificationMessage(notificationId));
+                rabbitTemplate.convertAndSend(exchangeName, dlqRoutingKey, new NotificationMessage(notificationId, notification.getRequestId()));
             }
 
             channel.basicAck(deliveryTag, false);

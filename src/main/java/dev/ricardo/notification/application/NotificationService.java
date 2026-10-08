@@ -60,6 +60,8 @@ public class NotificationService {
     private final SenderFactory senderFactory;
     private final NotificationPublisher notificationPublisher;
     private final TransactionTemplate transactionTemplate;
+    private final InputLimits inputLimits;
+    private final NotificationRateLimiter rateLimiter;
 
     @org.springframework.beans.factory.annotation.Value("${app.scheduling.max-future-days:365}")
     private int maxFutureDays = 365;
@@ -77,6 +79,13 @@ public class NotificationService {
             UUID applicationId,
             String idempotencyKey
     ) {
+        return sendNotification(request, applicationId, idempotencyKey, true);
+    }
+
+    public SendNotificationResult sendNotification(CreateNotificationRequest request, UUID applicationId, String idempotencyKey, boolean countLimit) {
+        inputLimits.variables(request.safeVariables());
+        if (countLimit) rateLimiter.reserve(applicationId, 1);
+        String requestHash = NotificationRequestHasher.hash(request);
         String cleanIdempotencyKey = (idempotencyKey != null && !idempotencyKey.isBlank())
                 ? idempotencyKey.trim()
                 : null;
@@ -89,7 +98,8 @@ public class NotificationService {
             Optional<NotificationEntity> existing = notificationRepository
                     .findByApplicationIdAndIdempotencyKey(applicationId, cleanIdempotencyKey);
             if (existing.isPresent()) {
-                log.info("Idempotent request replayed for notification {} with key '{}'", existing.get().getId(), cleanIdempotencyKey);
+                checkRequestHash(existing.get(), requestHash);
+                log.info("Idempotent request replayed for notification {}", existing.get().getId());
                 return new SendNotificationResult(NotificationResponse.from(existing.get()), true);
             }
         }
@@ -98,7 +108,9 @@ public class NotificationService {
 
         senderFactory.get(request.channel());
 
-        TemplateEntity template = templateRepository.findByCodeAndChannel(request.template(), request.channel())
+        TemplateEntity template = (applicationId == null
+                ? templateRepository.findByCodeAndChannel(request.template(), request.channel())
+                : templateRepository.findVisible(applicationId, request.template(), request.channel()))
                 .orElseThrow(() -> new TemplateNotFoundException(
                         String.format("Template '%s' not found for channel '%s'", request.template(), request.channel())
                 ));
@@ -144,6 +156,9 @@ public class NotificationService {
                         .scheduledAt(finalScheduledInstant)
                         .attempts(0)
                         .idempotencyKey(cleanIdempotencyKey)
+                        .requestHash(requestHash)
+                        .requestId(org.slf4j.MDC.get("requestId"))
+                        .origin("PANEL".equals(org.slf4j.MDC.get("origin"))?"PANEL":"APPLICATION")
                         .build();
                 NotificationEntity saved = notificationRepository.save(entity);
                 log.info("Notification {} created with status {} for channel {}", saved.getId(), saved.getStatus(), saved.getChannel());
@@ -154,7 +169,8 @@ public class NotificationService {
                 Optional<NotificationEntity> existing = notificationRepository
                         .findByApplicationIdAndIdempotencyKey(applicationId, cleanIdempotencyKey);
                 if (existing.isPresent()) {
-                    log.info("Concurrent race handled: returning existing notification {} for key '{}'", existing.get().getId(), cleanIdempotencyKey);
+                    checkRequestHash(existing.get(), requestHash);
+                    log.info("Concurrent race handled: returning existing notification {}", existing.get().getId());
                     return new SendNotificationResult(NotificationResponse.from(existing.get()), true);
                 }
             }
@@ -167,24 +183,31 @@ public class NotificationService {
             return new SendNotificationResult(NotificationResponse.from(notification), false);
         }
 
-        // Publica fora da transação do banco (sem I/O dentro de transação)
-        try {
-            notificationPublisher.publish(notification.getId());
-        } catch (Exception ex) {
-            log.error("Failed to publish notification {} to messaging queue. Leaving in status PENDING.", notification.getId(), ex);
-            throw (ex instanceof NotificationPublishException npe)
-                    ? npe
-                    : new NotificationPublishException("Failed to publish notification to queue", ex);
-        }
-
+        // QUEUED deve estar commitado antes da publicação, para o worker poder reivindicar a mensagem.
         NotificationEntity queuedEntity = transactionTemplate.execute(status -> {
             NotificationEntity entity = notificationRepository.findById(notification.getId())
                     .orElseThrow(() -> new NotificationNotFoundException(notification.getId()));
             entity.setStatus(NotificationStatus.QUEUED);
-            NotificationEntity saved = notificationRepository.save(entity);
-            log.info("Notification {} transitioned to QUEUED", saved.getId());
-            return saved;
+            return notificationRepository.save(entity);
         });
+
+        // Publica fora da transação do banco (sem I/O dentro de transação)
+        try {
+            notificationPublisher.publish(notification.getId());
+        } catch (Exception ex) {
+            transactionTemplate.executeWithoutResult(status -> {
+                notificationRepository.findLockedById(notification.getId()).ifPresent(entity -> {
+                    if (entity.getStatus() == NotificationStatus.QUEUED) {
+                        entity.setStatus(NotificationStatus.PENDING);
+                        notificationRepository.save(entity);
+                    }
+                });
+            });
+            log.error("Failed to publish notification {} to messaging queue. Type={}", notification.getId(), ex.getClass().getSimpleName());
+            throw (ex instanceof NotificationPublishException npe)
+                    ? npe
+                    : new NotificationPublishException("Failed to publish notification to queue", ex);
+        }
 
         return new SendNotificationResult(NotificationResponse.from(queuedEntity), false);
     }
@@ -223,8 +246,11 @@ public class NotificationService {
         }
 
         NotificationEntity queuedEntity = transactionTemplate.execute(status -> {
-            NotificationEntity entity = notificationRepository.findById(id)
+            NotificationEntity entity = notificationRepository.findLockedById(id)
                     .orElseThrow(() -> new NotificationNotFoundException(id));
+            if (entity.getStatus() != NotificationStatus.FAILED) {
+                throw new NotificationRetryConflictException("Only FAILED notifications can be retried");
+            }
             entity.setStatus(NotificationStatus.QUEUED);
             return notificationRepository.save(entity);
         });
@@ -232,13 +258,7 @@ public class NotificationService {
         try {
             notificationPublisher.publish(id);
         } catch (Exception ex) {
-            log.error("Failed to republish notification {} to messaging queue.", id, ex);
-            transactionTemplate.executeWithoutResult(status -> {
-                notificationRepository.findById(id).ifPresent(entity -> {
-                    entity.setStatus(NotificationStatus.FAILED);
-                    notificationRepository.save(entity);
-                });
-            });
+            log.error("Failed to republish notification {} to messaging queue. Type={}", id, ex.getClass().getSimpleName());
             throw (ex instanceof NotificationPublishException npe)
                     ? npe
                     : new NotificationPublishException("Failed to republish notification to queue", ex);
@@ -266,8 +286,11 @@ public class NotificationService {
         }
 
         NotificationEntity canceledEntity = transactionTemplate.execute(status -> {
-            NotificationEntity entity = notificationRepository.findById(id)
+            NotificationEntity entity = notificationRepository.findLockedById(id)
                     .orElseThrow(() -> new NotificationNotFoundException(id));
+            if (entity.getStatus() != NotificationStatus.SCHEDULED) {
+                throw new NotificationCancelConflictException("Only SCHEDULED notifications can be canceled");
+            }
             entity.setStatus(NotificationStatus.CANCELED);
             return notificationRepository.save(entity);
         });
@@ -361,6 +384,12 @@ public class NotificationService {
                     );
                 }
             }
+        }
+    }
+
+    private void checkRequestHash(NotificationEntity existing, String requestHash) {
+        if (existing.getRequestHash() != null && !existing.getRequestHash().equals(requestHash)) {
+            throw new dev.ricardo.notification.domain.IdempotencyConflictException();
         }
     }
 

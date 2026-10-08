@@ -127,14 +127,18 @@ class ApiKeyAuthFilterTest {
     }
 
     @Test
-    @DisplayName("shouldNotFilter deve retornar true para /actuator e /api/v1/admin")
+    @DisplayName("shouldNotFilter deve retornar true para /actuator, /api/v1/admin, /swagger-ui e /v3/api-docs")
     void shouldNotFilterActuatorAndAdmin() {
         MockHttpServletRequest actuatorReq = new MockHttpServletRequest("GET", "/actuator/health");
         MockHttpServletRequest adminReq = new MockHttpServletRequest("POST", "/api/v1/admin/applications");
+        MockHttpServletRequest swaggerReq = new MockHttpServletRequest("GET", "/swagger-ui/index.html");
+        MockHttpServletRequest apiDocsReq = new MockHttpServletRequest("GET", "/v3/api-docs");
         MockHttpServletRequest notificationsReq = new MockHttpServletRequest("POST", "/api/v1/notifications");
 
         assertThat(filter.shouldNotFilter(actuatorReq)).isTrue();
         assertThat(filter.shouldNotFilter(adminReq)).isTrue();
+        assertThat(filter.shouldNotFilter(swaggerReq)).isTrue();
+        assertThat(filter.shouldNotFilter(apiDocsReq)).isTrue();
         assertThat(filter.shouldNotFilter(notificationsReq)).isFalse();
     }
 }

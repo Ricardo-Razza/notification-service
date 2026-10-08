@@ -70,6 +70,9 @@ class NotificationServiceTest {
     @Mock
     private NotificationSender notificationSender;
 
+    @Mock private InputLimits inputLimits;
+    @Mock private NotificationRateLimiter rateLimiter;
+
     @InjectMocks
     private NotificationService notificationService;
 
@@ -182,12 +185,17 @@ class NotificationServiceTest {
         doThrow(new dev.ricardo.notification.domain.NotificationPublishException("RabbitMQ connection failure"))
                 .when(notificationPublisher).publish(notificationId);
 
+        var persisted = NotificationEntity.builder().id(notificationId).channel(NotificationChannel.EMAIL)
+                .recipient(request.recipient()).templateCode("WELCOME").status(NotificationStatus.PENDING).build();
+        when(notificationRepository.findById(notificationId)).thenReturn(Optional.of(persisted));
+        when(notificationRepository.findLockedById(notificationId)).thenReturn(Optional.of(persisted));
+
         assertThatThrownBy(() -> notificationService.sendNotification(request))
                 .isInstanceOf(dev.ricardo.notification.domain.NotificationPublishException.class)
                 .hasMessageContaining("RabbitMQ connection failure");
 
-        // Confirma que não transicionou para QUEUED
-        verify(notificationRepository, never()).findById(notificationId);
+        // Publicação falhou: o estado volta a PENDING sem sobrescrever um worker em andamento.
+        assertThat(persisted.getStatus()).isEqualTo(NotificationStatus.PENDING);
     }
 
     @Test

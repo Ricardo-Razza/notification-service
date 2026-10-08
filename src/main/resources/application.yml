@@ -2,6 +2,9 @@ spring:
   application:
     name: notification-service
 
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+
   datasource:
     url: ${DB_URL:jdbc:mysql://localhost:3309/notification}
     username: ${DB_USER:notification}
@@ -18,22 +21,25 @@ spring:
     enabled: true
 
   mail:
-    host: ${SPRING_MAIL_HOST:${MAIL_HOST:localhost}}
-    port: ${SPRING_MAIL_PORT:${MAIL_PORT:1025}}
+    host: ${SPRING_MAIL_HOST:localhost}
+    port: ${SPRING_MAIL_PORT:1025}
     username: ${SPRING_MAIL_USERNAME:}
     password: ${SPRING_MAIL_PASSWORD:}
     properties:
       mail:
         smtp:
+          connectiontimeout: ${SMTP_CONNECTION_TIMEOUT_MS:5000}
+          timeout: ${SMTP_READ_TIMEOUT_MS:10000}
+          writetimeout: ${SMTP_WRITE_TIMEOUT_MS:10000}
           auth: ${SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH:false}
           starttls:
             enable: ${SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE:false}
 
   rabbitmq:
-    host: ${SPRING_RABBITMQ_HOST:${RABBITMQ_HOST:localhost}}
-    port: ${SPRING_RABBITMQ_PORT:${RABBITMQ_PORT:5672}}
-    username: ${SPRING_RABBITMQ_USERNAME:${RABBITMQ_USER:guest}}
-    password: ${SPRING_RABBITMQ_PASSWORD:${RABBITMQ_PASSWORD:guest}}
+    host: ${SPRING_RABBITMQ_HOST:localhost}
+    port: ${SPRING_RABBITMQ_PORT:5672}
+    username: ${SPRING_RABBITMQ_USERNAME:guest}
+    password: ${SPRING_RABBITMQ_PASSWORD:guest}
     publisher-confirm-type: correlated
     publisher-returns: true
     listener:
@@ -41,10 +47,48 @@ spring:
         acknowledge-mode: manual
         concurrency: ${RABBITMQ_CONCURRENCY:2}
         max-concurrency: ${RABBITMQ_MAX_CONCURRENCY:5}
+        prefetch: ${RABBITMQ_PREFETCH:5}
+
+server:
+  shutdown: graceful
+  servlet:
+    session:
+      timeout: ${ADMIN_SESSION_TIMEOUT:30m}
+      cookie:
+        http-only: true
+        secure: ${ADMIN_COOKIE_SECURE:false}
+        same-site: strict
+        path: /api/admin
 
 app:
+  api:
+    title: ${API_TITLE:Notification Service API}
+    description: ${API_DESCRIPTION:Transactional notification service}
+    version: ${API_VERSION:1.0.0}
+  limits:
+    rate-per-minute: ${RATE_LIMIT_PER_MINUTE:100}
+    max-variables: ${MAX_VARIABLES:50}
+    variable-key-length: ${VARIABLE_KEY_LENGTH:64}
+    variable-value-length: ${VARIABLE_VALUE_LENGTH:2000}
+    request-body-bytes: ${REQUEST_BODY_MAX_BYTES:102400}
+    template-content-length: ${TEMPLATE_CONTENT_MAX_LENGTH:50000}
+    max-schedules: ${MAX_SCHEDULES_PER_APPLICATION:100}
+    minimum-cron-seconds: ${MINIMUM_CRON_SECONDS:60}
+    batch-size: ${NOTIFICATION_BATCH_SIZE:100}
   admin:
-    token: ${ADMIN_TOKEN:${APP_ADMIN_TOKEN:}}
+    token: ${ADMIN_TOKEN:}
+    email: ${ADMIN_EMAIL:}
+    password: ${ADMIN_PASSWORD:}
+    cookie-secure: ${ADMIN_COOKIE_SECURE:false}
+    lock-minutes: ${ADMIN_LOCK_MINUTES:15}
+    key-grace-hours: ${API_KEY_GRACE_HOURS:24}
+  retention:
+    enabled: ${RETENTION_ENABLED:true}
+    cron: ${RETENTION_CRON:0 0 3 * * *}
+    delete-days: ${RETENTION_DELETE_DAYS:90}
+    anonymize-days: ${RETENTION_ANONYMIZE_DAYS:30}
+    batch-size: ${RETENTION_BATCH_SIZE:1000}
+    pause-ms: ${RETENTION_PAUSE_MS:200}
   notification:
     max-attempts: ${NOTIFICATION_MAX_ATTEMPTS:3}
   mail:
@@ -57,6 +101,14 @@ app:
     batch-size: ${SCHEDULER_BATCH_SIZE:100}
     max-lateness-seconds: ${SCHEDULER_MAX_LATENESS_SECONDS:3600}
     missed-occurrence-policy: ${SCHEDULER_MISSED_OCCURRENCE_POLICY:SKIP_AND_GENERATE_LATEST}
+  reconciler:
+    enabled: ${RECONCILER_ENABLED:true}
+    interval-ms: ${RECONCILER_INTERVAL_MS:60000}
+    pending-seconds: ${RECONCILER_PENDING_SECONDS:120}
+    queued-seconds: ${RECONCILER_QUEUED_SECONDS:600}
+    processing-seconds: ${RECONCILER_PROCESSING_SECONDS:300}
+    batch-size: ${RECONCILER_BATCH_SIZE:100}
+    max-recoveries: ${RECONCILER_MAX_RECOVERIES:5}
   rabbitmq:
     exchange: ${RABBITMQ_EXCHANGE:notification.exchange}
     queue: ${RABBITMQ_QUEUE:notification.queue}
@@ -64,9 +116,9 @@ app:
     retry-1-ttl: ${RABBITMQ_RETRY_1_TTL:10000}
     retry-2-ttl: ${RABBITMQ_RETRY_2_TTL:30000}
     retry-3-ttl: ${RABBITMQ_RETRY_3_TTL:120000}
-    retry-1-routing-key: notification.retry.10s
-    retry-2-routing-key: notification.retry.30s
-    retry-3-routing-key: notification.retry.2m
+    retry-1-routing-key: notification.retry-1
+    retry-2-routing-key: notification.retry-2
+    retry-3-routing-key: notification.retry-3
     dlq: ${RABBITMQ_DLQ:notification.dlq}
     dlq-routing-key: ${RABBITMQ_DLQ_ROUTING_KEY:notification.dlq}
 
@@ -77,9 +129,34 @@ management:
         include: health,info,metrics
   endpoint:
     health:
-      show-details: always
+      show-details: never
   health:
     db:
       enabled: true
     rabbit:
       enabled: true
+
+logging:
+  structured:
+    format:
+      console: ${LOG_FORMAT:}
+  pattern:
+    console: "%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %-5level [%thread] requestId=%X{requestId} applicationId=%X{applicationId} notificationId=%X{notificationId} origin=%X{origin} %logger{40} - %msg%n"
+
+springdoc:
+  api-docs:
+    enabled: ${SWAGGER_ENABLED:false}
+    path: /v3/api-docs
+  swagger-ui:
+    enabled: ${SWAGGER_ENABLED:false}
+    path: /swagger-ui.html
+    operations-sorter: method
+    tags-sorter: alpha
+    display-request-duration: true
+    persist-authorization: false
+    csrf:
+      enabled: true
+      cookie-name: XSRF-TOKEN
+      header-name: X-XSRF-TOKEN
+  paths-to-match: /api/**
+  default-produces-media-type: application/json

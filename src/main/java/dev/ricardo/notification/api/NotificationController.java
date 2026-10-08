@@ -17,6 +17,7 @@ import java.net.URI;
 import java.util.UUID;
 
 @RestController
+@io.swagger.v3.oas.annotations.tags.Tag(name="Notifications")
 @RequestMapping("/api/v1/notifications")
 @RequiredArgsConstructor
 public class NotificationController {
@@ -24,6 +25,9 @@ public class NotificationController {
     private final NotificationService notificationService;
 
     @PostMapping
+    @io.swagger.v3.oas.annotations.Operation(summary="Create an immediate or scheduled notification",
+            requestBody=@io.swagger.v3.oas.annotations.parameters.RequestBody(content=@io.swagger.v3.oas.annotations.media.Content(
+                    examples=@io.swagger.v3.oas.annotations.media.ExampleObject(value="{\"recipient\":\"test@example.com\",\"channel\":\"EMAIL\",\"template\":\"WELCOME\",\"variables\":{\"name\":\"Test\"}}"))))
     public ResponseEntity<NotificationResponse> sendNotification(
             @org.springframework.web.bind.annotation.RequestAttribute(value = ApiKeyAuthFilter.AUTHENTICATED_APPLICATION_ID, required = false) UUID applicationId,
             @org.springframework.web.bind.annotation.RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,

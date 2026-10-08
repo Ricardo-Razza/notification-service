@@ -1,60 +1,28 @@
 #!/usr/bin/env bash
-# ==============================================================================
-# Script de Backup Automatizado do MySQL - Notification Service
-# ==============================================================================
-# Uso manual:
-#   ./scripts/backup.sh
-#
-# Configuração recomendada no crontab da VPS (diariamente às 02:00 AM):
-#   0 2 * * * /caminho/para/notification-service/scripts/backup.sh >> /var/log/notification-backup.log 2>&1
-# ==============================================================================
-
 set -euo pipefail
-
-# Diretório base do script
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-BACKUP_DIR="${PROJECT_ROOT}/backups"
-ENV_FILE="${PROJECT_ROOT}/.env.prod"
-
-# Carrega variáveis de ambiente se o arquivo existir
-if [ -f "$ENV_FILE" ]; then
-    # shellcheck disable=SC1090
-    set -a
-    source "$ENV_FILE"
-    set +a
-fi
-
-DB_NAME="${DB_NAME:-notification}"
-DB_USER="${DB_USER:-notification_user}"
-DB_PASSWORD="${DB_PASSWORD:-}"
-CONTAINER_NAME="notification-mysql-prod"
-TIMESTAMP="$(date +'%Y%m%d_%H%M%S')"
-BACKUP_FILE="${BACKUP_DIR}/notification_${TIMESTAMP}.sql.gz"
-RETENTION_DAYS=7
-
+umask 077
+TASK_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$TASK_ROOT"
+ENV_FILE="${ENV_FILE:-.env.prod}"
+if [[ -f "$ENV_FILE" ]]; then set -a; source "$ENV_FILE"; set +a; fi
+BACKUP_DIR="${BACKUP_DIR:-$TASK_ROOT/backups}"
 mkdir -p "$BACKUP_DIR"
-
-echo "[$(date -Iseconds)] Iniciando backup do banco de dados '${DB_NAME}'..."
-
-if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-    echo "[$(date -Iseconds)] ERRO: Container '${CONTAINER_NAME}' não está em execução!" >&2
-    exit 1
+BACKUP_DIR="$(cd "$BACKUP_DIR" && pwd)"
+[[ "$BACKUP_DIR" == "$TASK_ROOT/"* ]] || { echo 'Backup directory must be inside the project' >&2; exit 1; }
+UPLOAD="${BACKUP_UPLOAD_ENABLED:-true}"
+if [[ "$UPLOAD" == true ]]; then : "${BACKUP_REMOTE:?Configure an external rclone destination}"; command -v rclone >/dev/null; fi
+COMPOSE=(docker compose --env-file "$ENV_FILE" -f "${COMPOSE_FILE:-docker-compose.prod.yml}")
+STAMP="$(date -u +%Y%m%d_%H%M%S)"
+FILE="$BACKUP_DIR/notification_$STAMP.sql.gz"
+TEMP="$(mktemp "$BACKUP_DIR/.dump.XXXXXX")"
+trap 'rm -f -- "$TEMP"' EXIT
+# Credenciais por ambiente, sem senha na linha de comando.
+"${COMPOSE[@]}" exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysqldump -u "$MYSQL_USER" --single-transaction --quick --no-tablespaces --skip-extended-insert --hex-blob "$MYSQL_DATABASE"' > "$TEMP"
+awk '/^CREATE TABLE `/ { split($0,a,"`"); counts[a[2]]=0 } /^INSERT INTO `/ { split($0,a,"`"); counts[a[2]]++ } END { for(t in counts) print t " " counts[t] }' "$TEMP" | sort > "$FILE.counts"
+gzip -c "$TEMP" > "$FILE"
+(cd "$BACKUP_DIR" && sha256sum "$(basename "$FILE")" > "$(basename "$FILE").sha256")
+if [[ "$UPLOAD" == true ]]; then
+    for artifact in "$FILE" "$FILE.counts" "$FILE.sha256"; do rclone copy "$artifact" "$BACKUP_REMOTE"; done
 fi
-
-# Executa mysqldump dentro do container com compressão gzip
-docker exec "$CONTAINER_NAME" mysqldump \
-    -u "$DB_USER" \
-    "-p$DB_PASSWORD" \
-    --single-transaction \
-    --quick \
-    --databases "$DB_NAME" | gzip > "$BACKUP_FILE"
-
-BACKUP_SIZE="$(du -h "$BACKUP_FILE" | cut -f1)"
-echo "[$(date -Iseconds)] Backup concluído com sucesso: ${BACKUP_FILE} (${BACKUP_SIZE})"
-
-# Rotação: remove arquivos com mais de 7 dias
-echo "[$(date -Iseconds)] Executando rotação de backups (retenção: ${RETENTION_DAYS} dias)..."
-find "$BACKUP_DIR" -type f -name "notification_*.sql.gz" -mtime +"$RETENTION_DAYS" -exec rm -f {} \;
-
-echo "[$(date -Iseconds)] Processo finalizado com sucesso."
+find "$BACKUP_DIR" -maxdepth 1 -type f -name 'notification_[0-9]*.sql.gz*' -mtime +"${BACKUP_LOCAL_DAYS:-7}" -delete
+echo "Backup completed: $(basename "$FILE") (external upload=$UPLOAD)"

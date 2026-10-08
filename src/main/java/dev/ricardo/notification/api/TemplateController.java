@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.UUID;
 
 @RestController
+@io.swagger.v3.oas.annotations.tags.Tag(name="Templates")
 @RequestMapping("/api/v1/templates")
 @RequiredArgsConstructor
 public class TemplateController {
@@ -29,8 +30,10 @@ public class TemplateController {
     private final TemplateService templateService;
 
     @PostMapping
-    public ResponseEntity<TemplateResponse> createTemplate(@Valid @RequestBody CreateTemplateRequest request) {
-        TemplateResponse created = templateService.createTemplate(request);
+    @io.swagger.v3.oas.annotations.Operation(summary="Create an application-owned template")
+    public ResponseEntity<TemplateResponse> createTemplate(@Valid @RequestBody CreateTemplateRequest request,
+            @org.springframework.web.bind.annotation.RequestAttribute(ApiKeyAuthFilter.AUTHENTICATED_APPLICATION_ID) UUID applicationId) {
+        TemplateResponse created = templateService.createTemplate(request, applicationId);
         URI location = ServletUriComponentsBuilder.fromCurrentRequest()
                 .path("/{id}")
                 .buildAndExpand(created.id())
@@ -40,21 +43,24 @@ public class TemplateController {
 
     @GetMapping
     public List<TemplateResponse> listTemplates(
-            @RequestParam(name = "channel", required = false) NotificationChannel channel
+            @RequestParam(name = "channel", required = false) NotificationChannel channel,
+            @org.springframework.web.bind.annotation.RequestAttribute(ApiKeyAuthFilter.AUTHENTICATED_APPLICATION_ID) UUID applicationId
     ) {
-        return templateService.listTemplates(channel);
+        return templateService.listTemplates(channel, applicationId);
     }
 
     @GetMapping("/{id}")
-    public TemplateResponse getTemplateById(@PathVariable("id") UUID id) {
-        return templateService.getTemplateById(id);
+    public TemplateResponse getTemplateById(@PathVariable("id") UUID id,
+            @org.springframework.web.bind.annotation.RequestAttribute(ApiKeyAuthFilter.AUTHENTICATED_APPLICATION_ID) UUID applicationId) {
+        return templateService.getTemplateById(id, applicationId);
     }
 
     @PutMapping("/{id}")
     public TemplateResponse updateTemplate(
             @PathVariable("id") UUID id,
-            @Valid @RequestBody UpdateTemplateRequest request
+            @Valid @RequestBody UpdateTemplateRequest request,
+            @org.springframework.web.bind.annotation.RequestAttribute(ApiKeyAuthFilter.AUTHENTICATED_APPLICATION_ID) UUID applicationId
     ) {
-        return templateService.updateTemplate(id, request);
+        return templateService.updateTemplate(id, request, applicationId);
     }
 }

@@ -34,6 +34,8 @@ class TemplateServiceTest {
     @Mock
     private TemplateRepository templateRepository;
 
+    @Mock private InputLimits inputLimits;
+
     @InjectMocks
     private TemplateService templateService;
 

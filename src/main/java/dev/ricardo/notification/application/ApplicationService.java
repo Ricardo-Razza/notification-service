@@ -23,6 +23,31 @@ public class ApplicationService {
 
     private final ApplicationRepository applicationRepository;
     private final ApiKeyService apiKeyService;
+    @org.springframework.beans.factory.annotation.Value("${app.admin.key-grace-hours:24}") private long keyGraceHours = 24;
+
+    @Transactional
+    public ApplicationCreatedResponse rotateKey(UUID id) {
+        var entity = applicationRepository.findLockedById(id).orElseThrow(() -> new ApplicationNotFoundException(id));
+        var key = apiKeyService.generateApiKey();
+        entity.setApiKeyHashPrevious(entity.getApiKeyHash());
+        entity.setPreviousKeyExpiresAt(java.time.Instant.now().plus(java.time.Duration.ofHours(keyGraceHours)));
+        entity.setApiKeyHash(key.hash());
+        return ApplicationCreatedResponse.of(applicationRepository.save(entity), key.rawApiKey());
+    }
+
+    @Transactional
+    public ApplicationResponse revokePreviousKey(UUID id) {
+        var entity = applicationRepository.findLockedById(id).orElseThrow(() -> new ApplicationNotFoundException(id));
+        entity.setApiKeyHashPrevious(null); entity.setPreviousKeyExpiresAt(null);
+        return ApplicationResponse.from(applicationRepository.save(entity));
+    }
+
+    @Transactional
+    public ApplicationResponse updateRateLimit(UUID id, Integer limit) {
+        if (limit != null && limit < 1) throw new dev.ricardo.notification.domain.InvalidNotificationException("Rate limit must be positive or null");
+        var entity = applicationRepository.findLockedById(id).orElseThrow(() -> new ApplicationNotFoundException(id));
+        entity.setRateLimitPerMinute(limit); return ApplicationResponse.from(applicationRepository.save(entity));
+    }
 
     @Transactional
     public ApplicationCreatedResponse createApplication(CreateApplicationRequest request) {

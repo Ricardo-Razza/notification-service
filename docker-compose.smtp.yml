@@ -1,0 +1,11 @@
+# Opt-in real SMTP for the local preview. Load .env.smtp and keep the LAN override when needed.
+services:
+  app:
+    environment:
+      SPRING_MAIL_HOST: ${SPRING_MAIL_HOST:?Configure SPRING_MAIL_HOST in .env.smtp}
+      SPRING_MAIL_PORT: ${SPRING_MAIL_PORT:-587}
+      SPRING_MAIL_USERNAME: ${SPRING_MAIL_USERNAME:?Configure SPRING_MAIL_USERNAME in .env.smtp}
+      SPRING_MAIL_PASSWORD: ${SPRING_MAIL_PASSWORD:?Configure SPRING_MAIL_PASSWORD in .env.smtp}
+      SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH: 'true'
+      SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE: 'true'
+      MAIL_FROM: ${MAIL_FROM:?Configure a verified sender in .env.smtp}

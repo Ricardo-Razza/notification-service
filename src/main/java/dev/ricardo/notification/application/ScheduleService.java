@@ -39,12 +39,19 @@ public class ScheduleService {
     private final TemplateRepository templateRepository;
     private final SenderFactory senderFactory;
     private final ScheduleTimeCalculator scheduleTimeCalculator;
+    private final InputLimits inputLimits;
+    private final dev.ricardo.notification.infrastructure.persistence.ApplicationRepository applicationRepository;
+    @org.springframework.beans.factory.annotation.Value("${app.limits.max-schedules:100}") private int maxSchedules = 100;
 
     @Transactional
     public ScheduleResponse createSchedule(CreateScheduleRequest request, UUID applicationId) {
         if (applicationId == null) {
             throw new InvalidScheduleException("Authenticated application is required to manage schedules");
         }
+
+        applicationRepository.findLockedById(applicationId).orElseThrow(() -> new dev.ricardo.notification.domain.ApplicationNotFoundException(applicationId));
+        if (scheduleRepository.countByApplicationId(applicationId) >= maxSchedules) throw new InvalidScheduleException("Schedule limit exceeded");
+        inputLimits.variables(request.safeVariables());
 
         scheduleRepository.findByApplicationIdAndName(applicationId, request.name().trim())
                 .ifPresent(existing -> {
@@ -54,7 +61,7 @@ public class ScheduleService {
         validateRecipient(request.channel(), request.recipient());
         senderFactory.get(request.channel());
 
-        templateRepository.findByCodeAndChannel(request.template(), request.channel())
+        templateRepository.findVisible(applicationId, request.template(), request.channel())
                 .orElseThrow(() -> new TemplateNotFoundException(
                         String.format("Template '%s' not found for channel '%s'", request.template(), request.channel())
                 ));
@@ -124,6 +131,7 @@ public class ScheduleService {
 
     @Transactional
     public ScheduleResponse updateSchedule(UUID id, UpdateScheduleRequest request, UUID applicationId) {
+        inputLimits.variables(request.safeVariables());
         NotificationScheduleEntity entity = getEntity(id, applicationId);
 
         if (!entity.getName().equals(request.name().trim())) {
@@ -137,7 +145,7 @@ public class ScheduleService {
         validateRecipient(request.channel(), request.recipient());
         senderFactory.get(request.channel());
 
-        templateRepository.findByCodeAndChannel(request.template(), request.channel())
+        templateRepository.findVisible(applicationId, request.template(), request.channel())
                 .orElseThrow(() -> new TemplateNotFoundException(
                         String.format("Template '%s' not found for channel '%s'", request.template(), request.channel())
                 ));
